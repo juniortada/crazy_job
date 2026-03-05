@@ -10,7 +10,7 @@ pip install conveyor-jobs
 
 ---
 
-## Why Conveyor?
+## Why?
 
 - **Zero extra infrastructure** — uses the PostgreSQL you already have. No Redis, no RabbitMQ, no Celery broker.
 - **Framework-agnostic** — works with Flask today, Django and FastAPI on the way. The core engine has zero framework imports.
