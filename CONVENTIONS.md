@@ -141,7 +141,15 @@ class PostgreSQLDriver(BackendDriver):
         self._pool.closeall()
 ```
 
-### Fetch with SKIP LOCKED
+### Fetch with SKIP LOCKED — atomic claim
+
+The fetch query does four things in one atomic `UPDATE ... RETURNING`:
+1. Finds the next available job (SKIP LOCKED)
+2. Sets `status = 'active'`
+3. Sets `worker_id` and `started_at`
+4. Increments `attempts`
+
+**All four happen before user code runs.** This is the queue poisoning protection.
 
 ```python
     def fetch_next(self, queues: list[str]) -> JobRecord | None:
@@ -156,13 +164,18 @@ class PostgreSQLDriver(BackendDriver):
                 FOR UPDATE SKIP LOCKED
             )
             UPDATE cj_jobs
-            SET status = 'active', updated_at = NOW()
+            SET
+                status     = 'active',
+                worker_id  = %s,
+                started_at = NOW(),
+                attempts   = attempts + 1,
+                updated_at = NOW()
             FROM next_job
             WHERE cj_jobs.id = next_job.id
             RETURNING cj_jobs.*;
         """
         with self._cursor() as cur:
-            cur.execute(sql, (queues,))
+            cur.execute(sql, (queues, self._worker_id))
             row = cur.fetchone()
             if row is None:
                 return None
@@ -423,20 +436,25 @@ CREATE TABLE IF NOT EXISTS cj_jobs (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     queue           VARCHAR(255) NOT NULL DEFAULT 'default',
     class_path      VARCHAR(500) NOT NULL,
-    args            JSONB NOT NULL DEFAULT '[]',
-    kwargs          JSONB NOT NULL DEFAULT '{}',
+    args            JSONB        NOT NULL DEFAULT '[]',
+    kwargs          JSONB        NOT NULL DEFAULT '{}',
     status          cj_job_status NOT NULL DEFAULT 'enqueued',
-    priority        INTEGER NOT NULL DEFAULT 50,
-    attempts        INTEGER NOT NULL DEFAULT 0,
-    max_attempts    INTEGER NOT NULL DEFAULT 3,
+    priority        INTEGER      NOT NULL DEFAULT 50,
+
+    -- Queue poisoning protection: both columns are NOT NULL.
+    -- max_attempts has a CHECK constraint — zero is forbidden.
+    -- A job with max_attempts=0 would loop forever on a buggy payload.
+    attempts        INTEGER      NOT NULL DEFAULT 0,
+    max_attempts    INTEGER      NOT NULL DEFAULT 3 CHECK (max_attempts >= 1),
+
     run_at          TIMESTAMPTZ,
-    started_at      TIMESTAMPTZ,
+    started_at      TIMESTAMPTZ,           -- set atomically on first fetch, never null after pick-up
     completed_at    TIMESTAMPTZ,
     failed_at       TIMESTAMPTZ,
     error           TEXT,
-    worker_id       VARCHAR(500),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    worker_id       VARCHAR(500),          -- set atomically on fetch, alongside started_at
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
 -- Indexes for worker fetch query performance
@@ -453,49 +471,146 @@ CREATE INDEX IF NOT EXISTS idx_cj_jobs_run_at
 
 -- Worker registry
 CREATE TABLE IF NOT EXISTS cj_workers (
-    id              VARCHAR(500) PRIMARY KEY,
-    queues          TEXT[] NOT NULL,
-    concurrency     INTEGER NOT NULL DEFAULT 1,
-    status          cj_worker_status NOT NULL DEFAULT 'idle',
+    id              VARCHAR(500)      PRIMARY KEY,
+    queues          TEXT[]            NOT NULL,
+    concurrency     INTEGER           NOT NULL DEFAULT 1,
+    status          cj_worker_status  NOT NULL DEFAULT 'idle',
     current_job_id  UUID REFERENCES cj_jobs(id) ON DELETE SET NULL,
-    started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_beat_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    started_at      TIMESTAMPTZ       NOT NULL DEFAULT NOW(),
+    last_beat_at    TIMESTAMPTZ       NOT NULL DEFAULT NOW()
 );
 
 -- Dead letters
 CREATE TABLE IF NOT EXISTS cj_dead_letters (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    original_job    JSONB NOT NULL,
-    reason          TEXT NOT NULL,
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    original_job    JSONB       NOT NULL,
+    reason          TEXT        NOT NULL,
     killed_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     resurrected_at  TIMESTAMPTZ
 );
 
 -- Recurring cron schedules
 CREATE TABLE IF NOT EXISTS cj_schedules (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     name            VARCHAR(255) NOT NULL UNIQUE,
     cron            VARCHAR(100) NOT NULL,
     class_path      VARCHAR(500) NOT NULL,
-    args            JSONB NOT NULL DEFAULT '[]',
-    kwargs          JSONB NOT NULL DEFAULT '{}',
-    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    args            JSONB        NOT NULL DEFAULT '[]',
+    kwargs          JSONB        NOT NULL DEFAULT '{}',
+    enabled         BOOLEAN      NOT NULL DEFAULT TRUE,
     last_run_at     TIMESTAMPTZ,
     next_run_at     TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
 -- Queue pauses
 CREATE TABLE IF NOT EXISTS cj_queue_pauses (
     queue           VARCHAR(255) PRIMARY KEY,
-    paused_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    paused_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     paused_by       VARCHAR(255)
 );
 ```
 
 ---
 
-## Test conftest.py Pattern
+## Worker Execute Loop — Queue Poisoning Protection
+
+The fetch loop must check `attempts >= max_attempts` **after** the atomic fetch (which already incremented `attempts`). This way a job that hits its limit on the current attempt moves to dead letters immediately, instead of being re-enqueued and picked up again.
+
+```python
+# crazyjob/core/worker.py
+
+class Worker:
+
+    def _run_loop(self) -> None:
+        while self._running:
+            job = self.backend.fetch_next(self._queues)
+
+            if job is None:
+                time.sleep(self._poll_interval)
+                continue
+
+            # At this point, job.attempts has ALREADY been incremented by fetch_next.
+            # If we're at or over the limit, kill immediately — don't run user code.
+            if job.attempts > job.max_attempts:
+                self.backend.move_to_dead(
+                    job.id,
+                    reason=f"Exceeded max_attempts ({job.max_attempts})"
+                )
+                continue
+
+            self._execute(job)
+
+    def _execute(self, job: JobRecord) -> None:
+        try:
+            instance = self._load_job_class(job)
+            self._pipeline.run(job, lambda: instance.perform(*job.args, **job.kwargs))
+            self.backend.mark_completed(job.id, result={})
+
+        except Retry as e:
+            retry_at = datetime.utcnow() + timedelta(seconds=e.in_seconds or 0)
+            self.backend.mark_failed(job.id, error=str(e), retry_at=retry_at)
+
+        except Exception as e:
+            error_text = traceback.format_exc()
+            if job.attempts >= job.max_attempts:
+                # This was the last allowed attempt — send to dead letters
+                self.backend.move_to_dead(job.id, reason=error_text)
+            else:
+                # Still have attempts left — schedule retry with backoff
+                policy = get_backoff_policy(type(instance).retry_backoff)
+                retry_at = datetime.utcnow() + policy.delay_for(job.attempts)
+                self.backend.mark_failed(job.id, error=error_text, retry_at=retry_at)
+```
+
+---
+
+## Enqueue Validation — Reject Poison Pills at the Source
+
+```python
+# crazyjob/core/client.py
+
+class Client:
+
+    def enqueue(
+        self,
+        job_class: type[Job],
+        args: list,
+        kwargs: dict,
+        delay: timedelta | None = None,
+        run_at: datetime | None = None,
+    ) -> str:
+
+        # Hard validation — raise before touching the database
+        if job_class.max_attempts < 1:
+            raise ConfigurationError(
+                f"{job_class.__name__}.max_attempts must be >= 1, "
+                f"got {job_class.max_attempts}. "
+                f"A value of 0 would cause the job to loop forever on failure "
+                f"(queue poisoning)."
+            )
+
+        # Validate args are serializable now, not at execution time
+        try:
+            Serializer.dumps({"args": args, "kwargs": kwargs})
+        except TypeError as e:
+            raise ConfigurationError(
+                f"Job arguments for {job_class.__name__} are not serializable: {e}. "
+                f"Pass only JSON-compatible types (str, int, float, bool, list, dict, "
+                f"datetime, UUID). Do not pass ORM model instances."
+            ) from e
+
+        record = JobRecord(
+            class_path=job_class._class_path(),
+            args=args,
+            kwargs=kwargs,
+            queue=job_class.queue,
+            priority=job_class.priority,
+            max_attempts=job_class.max_attempts,
+            run_at=_resolve_run_at(delay, run_at),
+        )
+        return self.backend.enqueue(record)
+```
 
 ```python
 # tests/conftest.py

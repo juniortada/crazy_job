@@ -176,6 +176,114 @@ FOR UPDATE SKIP LOCKED;
 
 ---
 
+## Queue Poisoning — Critical Protection Rules
+
+**Queue poisoning** is what happens when a buggy job blocks the entire queue. A worker picks up the job, crashes or loops, the job goes back to `enqueued`, the next worker picks it up again — and the queue halts completely. This happened in production at a company with a hand-rolled Redis queue and caused a full-day outage.
+
+CrazyJob prevents this with the following hard rules. **Never relax any of these.**
+
+### Rule 1: `attempts` and `max_attempts` are NOT NULL at the database level
+
+Both columns must have `NOT NULL` with a `DEFAULT` and a `CHECK` constraint. A job that somehow bypasses the application layer and lands in the DB without these values must be rejected by the database itself.
+
+```sql
+-- Non-negotiable schema constraints
+attempts     INTEGER NOT NULL DEFAULT 0,
+max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts >= 1)
+```
+
+`max_attempts = 0` is **forbidden**. Zero means infinite retries, which means one buggy job poisons the queue forever.
+
+### Rule 2: `attempts` is incremented BEFORE `perform()` is called
+
+The worker must write `attempts = attempts + 1` and `started_at = NOW()` to the database **before** calling `perform()`, not after. This is the single most important ordering rule in the entire codebase.
+
+**Why:** If `perform()` causes a segfault, an OOM kill, an unhandled signal, or any crash that prevents the worker from running post-execution code — the attempt is still recorded. Without this, a crashing job resets to `attempts = 0` on every pick-up and loops forever.
+
+```python
+# CORRECT order inside the fetch loop
+def _execute(self, job: JobRecord) -> None:
+    # 1. Record the attempt FIRST — before any user code runs
+    self.backend.increment_attempts(job.id, worker_id=self.id)  # attempts += 1, started_at = NOW()
+
+    # 2. Check if we have already exceeded max_attempts after incrementing
+    if job.attempts + 1 > job.max_attempts:
+        self.backend.move_to_dead(job.id, reason="Exceeded max_attempts")
+        return
+
+    # 3. Only now run user code
+    try:
+        self._run_perform(job)
+        self.backend.mark_completed(job.id, result={})
+    except Exception as e:
+        self._handle_failure(job, e)
+```
+
+### Rule 3: Every job pick-up must be visible in the database
+
+There must be no such thing as a "silent" job execution. The moment a worker picks up a job, the following fields must be written atomically in the same transaction as the SKIP LOCKED fetch:
+
+- `status` → `'active'`
+- `worker_id` → the worker's ID
+- `started_at` → `NOW()`
+- `attempts` → `attempts + 1`
+
+All four in one `UPDATE ... RETURNING`. Never split this across two queries.
+
+```sql
+-- The fetch-and-claim must be a single atomic operation
+WITH next_job AS (
+    SELECT id FROM cj_jobs
+    WHERE status IN ('enqueued', 'retrying')
+      AND (run_at IS NULL OR run_at <= NOW())
+      AND queue = ANY(:queues)
+    ORDER BY priority ASC, created_at ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE cj_jobs
+SET
+    status     = 'active',
+    worker_id  = :worker_id,
+    started_at = NOW(),
+    attempts   = attempts + 1,
+    updated_at = NOW()
+FROM next_job
+WHERE cj_jobs.id = next_job.id
+RETURNING cj_jobs.*;
+```
+
+### Rule 4: Validate `max_attempts >= 1` at enqueue time, not just at the DB level
+
+Defense in depth. The `Client.enqueue()` method must raise `ConfigurationError` before touching the database if `max_attempts < 1`.
+
+```python
+def enqueue(self, job_class: type[Job], ...) -> str:
+    if job_class.max_attempts < 1:
+        raise ConfigurationError(
+            f"{job_class.__name__}.max_attempts must be >= 1. "
+            f"Got {job_class.max_attempts}. "
+            f"Setting max_attempts=0 would cause a poison pill that loops forever."
+        )
+    ...
+```
+
+### Rule 5: Dead letter is the end of the line, not a retry
+
+When `attempts >= max_attempts`, the job moves to `cj_dead_letters` and its `status` is set to `'dead'`. It stays there until a human explicitly resurrects it from the dashboard. **Never automatically re-enqueue dead jobs.**
+
+### Summary table
+
+| Scenario | What happens | Queue blocked? |
+|---|---|---|
+| `perform()` raises an exception | `attempts += 1`, scheduled for retry if `attempts < max_attempts` | No |
+| `perform()` raises and `attempts == max_attempts` | Moved to `cj_dead_letters` | No |
+| Worker process crashes mid-execution | `started_at` and `attempts` already written. Dead worker detection re-enqueues if `attempts < max_attempts`, or kills if at limit | No |
+| Job with `max_attempts = 0` | **Rejected at enqueue time by application. Rejected at DB level by CHECK constraint.** | Never reaches queue |
+| Job with `max_attempts = NULL` | **Rejected at DB level by NOT NULL constraint.** | Never reaches queue |
+
+---
+
 ## Abstract Interfaces — Implement These Exactly
 
 ### BackendDriver (`crazyjob/backends/base.py`)
@@ -185,9 +293,13 @@ class BackendDriver(ABC):
     @abstractmethod
     def enqueue(self, job: JobRecord) -> str: ...
     @abstractmethod
-    def fetch_next(self, queues: list[str]) -> JobRecord | None: ...
-    @abstractmethod
-    def mark_active(self, job_id: str, worker_id: str) -> None: ...
+    def fetch_next(self, queues: list[str]) -> JobRecord | None:
+        """
+        Atomically fetch, lock, and claim the next job.
+        Must increment attempts and set started_at in the SAME transaction.
+        Never split this into two queries. See Queue Poisoning rules.
+        """
+        ...
     @abstractmethod
     def mark_completed(self, job_id: str, result: dict) -> None: ...
     @abstractmethod
@@ -205,6 +317,8 @@ class BackendDriver(ABC):
     @abstractmethod
     def get_dead_letter(self, job_id: str) -> DeadLetterRecord | None: ...
 ```
+
+Note: `mark_active` is **not** a separate method. Claiming a job (setting it active, recording `worker_id`, `started_at`, incrementing `attempts`) happens inside `fetch_next` atomically. There is no separate "mark active" step.
 
 ### FrameworkIntegration (`crazyjob/integrations/base.py`)
 
@@ -289,9 +403,10 @@ Custom policies: any `Callable[[int], timedelta]` is accepted as `retry_backoff`
 
 - One process, N threads (thread pool). N = `--concurrency` flag.
 - One additional heartbeat thread that writes every `CRAZYJOB_HEARTBEAT_INTERVAL` seconds.
-- Fetch loop per thread: `fetch_next → execute → mark_completed/failed`.
-- Graceful shutdown on `SIGTERM`/`SIGINT`: stop fetching, wait up to `shutdown_timeout`, re-enqueue stranded jobs, deregister.
-- Dead worker detection: any worker thread that sees `last_beat_at` older than `CRAZYJOB_DEAD_WORKER_THRESHOLD` seconds re-enqueues the dead worker's active jobs.
+- Fetch loop per thread: `fetch_next` (atomically claims + increments attempts) → check if attempts exceeded → execute → `mark_completed/failed`.
+- **`attempts` is incremented inside `fetch_next`, before user code runs.** This is non-negotiable. See Queue Poisoning rules.
+- Graceful shutdown on `SIGTERM`/`SIGINT`: stop fetching, wait up to `shutdown_timeout`, re-enqueue stranded jobs (if under max_attempts), kill them (if at max_attempts), deregister.
+- Dead worker detection: any worker thread that sees `last_beat_at` older than `CRAZYJOB_DEAD_WORKER_THRESHOLD` seconds re-enqueues the dead worker's active jobs if under `max_attempts`, or moves them to dead letters if at limit.
 
 ---
 
