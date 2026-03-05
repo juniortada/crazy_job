@@ -2,15 +2,15 @@
 
 **Background job processing for Python web applications — PostgreSQL only, no Redis required.**
 
-Conveyor is a framework-agnostic background job library inspired by Sidekiq and ActiveJob. Define jobs as Python classes, enqueue them from anywhere in your application, and process them with a resilient worker engine backed entirely by PostgreSQL.
+CrazyJob is a framework-agnostic background job library inspired by Sidekiq and ActiveJob. Define jobs as Python classes, enqueue them from anywhere in your application, and process them with a resilient worker engine backed entirely by PostgreSQL.
 
 ```bash
-pip install conveyor-jobs
+pip install crazyjob
 ```
 
 ---
 
-## Why?
+## Why CrazyJob?
 
 - **Zero extra infrastructure** — uses the PostgreSQL you already have. No Redis, no RabbitMQ, no Celery broker.
 - **Framework-agnostic** — works with Flask today, Django and FastAPI on the way. The core engine has zero framework imports.
@@ -24,7 +24,7 @@ pip install conveyor-jobs
 
 ```python
 # Define a job
-from conveyor import Job
+from crazyjob import Job
 
 class SendInvoiceJob(Job):
     queue = "mailers"
@@ -44,10 +44,10 @@ SendInvoiceJob.enqueue_in(timedelta(hours=2), invoice_id=123, email="customer@ex
 
 ```bash
 # Run a worker
-conveyor worker --queues mailers,default --concurrency 10
+crazyjob worker --queues mailers,default --concurrency 10
 
 # Run the cron scheduler
-conveyor scheduler
+crazyjob scheduler
 ```
 
 ---
@@ -72,18 +72,18 @@ conveyor scheduler
 
 ```python
 from flask import Flask
-from conveyor.integrations.flask import FlaskConveyor
+from crazyjob.integrations.flask import FlaskCrazyJob
 
 app = Flask(__name__)
-app.config["CONVEYOR_DATABASE_URL"] = "postgresql://user:password@localhost/mydb"
+app.config["CRAZYJOB_DATABASE_URL"] = "postgresql://user:password@localhost/mydb"
 
-conveyor = FlaskConveyor(app)
+cj = FlaskCrazyJob(app)
 ```
 
-Apply migrations, then navigate to `/conveyor` for the dashboard.
+Apply migrations, then navigate to `/crazyjob` for the dashboard.
 
 ```bash
-conveyor migrate
+crazyjob migrate
 ```
 
 ---
@@ -104,10 +104,12 @@ conveyor migrate
 - [ ] Core engine (Job, Worker, Retry, Scheduler)
 - [ ] Flask integration
 - [ ] Web dashboard
+- [ ] Lint toolchain + test suite
+- [ ] Docker & Docker Compose
+- [ ] CI/CD pipeline
 - [ ] PyPI release
 - [ ] Django integration
 - [ ] FastAPI integration
-- [ ] Redis backend driver
 
 ---
 
