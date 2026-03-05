@@ -1,13 +1,16 @@
 """FastAPI dashboard adapter — APIRouter + Jinja2 + HTMX."""
+
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from crazyjob.dashboard.adapters.base import DashboardAdapter
-from crazyjob.dashboard.core.actions import DashboardActions
-from crazyjob.dashboard.core.queries import DashboardQueries
+
+if TYPE_CHECKING:
+    from crazyjob.dashboard.core.actions import DashboardActions
+    from crazyjob.dashboard.core.queries import DashboardQueries
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "..", "templates")
 
@@ -56,51 +59,37 @@ class FastAPIDashboardAdapter(DashboardAdapter):
         @router.get("/", response_class=HTMLResponse)
         def overview(request: Request) -> Any:
             stats = queries.overview_stats()
-            return templates.TemplateResponse(
-                "crazyjob/overview.html", _ctx(request, stats=stats)
-            )
+            return templates.TemplateResponse("crazyjob/overview.html", _ctx(request, stats=stats))
 
         @router.get("/queues", response_class=HTMLResponse)
         def queues_page(request: Request) -> Any:
             jobs = queries.list_jobs(status="enqueued")
-            return templates.TemplateResponse(
-                "crazyjob/queues.html", _ctx(request, jobs=jobs)
-            )
+            return templates.TemplateResponse("crazyjob/queues.html", _ctx(request, jobs=jobs))
 
         @router.get("/active", response_class=HTMLResponse)
         def active(request: Request) -> Any:
             jobs = queries.list_jobs(status="active")
-            return templates.TemplateResponse(
-                "crazyjob/active.html", _ctx(request, jobs=jobs)
-            )
+            return templates.TemplateResponse("crazyjob/active.html", _ctx(request, jobs=jobs))
 
         @router.get("/scheduled", response_class=HTMLResponse)
         def scheduled(request: Request) -> Any:
             jobs = queries.list_jobs(status="scheduled")
-            return templates.TemplateResponse(
-                "crazyjob/scheduled.html", _ctx(request, jobs=jobs)
-            )
+            return templates.TemplateResponse("crazyjob/scheduled.html", _ctx(request, jobs=jobs))
 
         @router.get("/retrying", response_class=HTMLResponse)
         def retrying(request: Request) -> Any:
             jobs = queries.list_jobs(status="retrying")
-            return templates.TemplateResponse(
-                "crazyjob/retrying.html", _ctx(request, jobs=jobs)
-            )
+            return templates.TemplateResponse("crazyjob/retrying.html", _ctx(request, jobs=jobs))
 
         @router.get("/completed", response_class=HTMLResponse)
         def completed(request: Request) -> Any:
             jobs = queries.list_jobs(status="completed")
-            return templates.TemplateResponse(
-                "crazyjob/completed.html", _ctx(request, jobs=jobs)
-            )
+            return templates.TemplateResponse("crazyjob/completed.html", _ctx(request, jobs=jobs))
 
         @router.get("/failed", response_class=HTMLResponse)
         def failed(request: Request) -> Any:
             jobs = queries.list_jobs(status="failed")
-            return templates.TemplateResponse(
-                "crazyjob/failed.html", _ctx(request, jobs=jobs)
-            )
+            return templates.TemplateResponse("crazyjob/failed.html", _ctx(request, jobs=jobs))
 
         @router.get("/dead", response_class=HTMLResponse)
         def dead(request: Request) -> Any:

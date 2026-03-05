@@ -1,15 +1,20 @@
 """Flask integration for CrazyJob — init_app pattern."""
+
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 
-from crazyjob.backends.base import BackendDriver
 from crazyjob.config import CrazyJobConfig
 from crazyjob.core.client import Client, set_client
 from crazyjob.core.middleware import Middleware, MiddlewarePipeline
 from crazyjob.dashboard.adapters.flask import FlaskDashboardAdapter
 from crazyjob.dashboard.core.factory import create_dashboard_actions, create_dashboard_queries
 from crazyjob.integrations.base import FrameworkIntegration
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from crazyjob.backends.base import BackendDriver
 
 
 class FlaskCrazyJob(FrameworkIntegration):
@@ -44,7 +49,7 @@ class FlaskCrazyJob(FrameworkIntegration):
         return _create_backend(config.database_url)
 
     def setup_lifecycle_hooks(self, app: Any) -> None:
-        @app.teardown_appcontext
+        @app.teardown_appcontext  # type: ignore[untyped-decorator]
         def close_backend(exc: Exception | None) -> None:
             # Connection pool cleanup happens at app shutdown, not per request
             pass
@@ -56,7 +61,7 @@ class FlaskCrazyJob(FrameworkIntegration):
         bp = adapter.get_mountable()
         app.register_blueprint(bp, url_prefix=url_prefix)
 
-    def wrap_job_context(self, func: Callable) -> Callable:
+    def wrap_job_context(self, func: Callable[..., object]) -> Callable[..., object]:
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             with self._app.app_context():
                 return func(*args, **kwargs)

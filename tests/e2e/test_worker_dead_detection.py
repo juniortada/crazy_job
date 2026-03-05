@@ -1,4 +1,5 @@
 """E2E test: dead worker detection re-enqueues jobs."""
+
 from __future__ import annotations
 
 import pytest

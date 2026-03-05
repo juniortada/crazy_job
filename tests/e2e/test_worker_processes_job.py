@@ -1,4 +1,5 @@
 """E2E test: worker picks up and completes a job."""
+
 from __future__ import annotations
 
 import threading

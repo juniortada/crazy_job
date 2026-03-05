@@ -1,14 +1,17 @@
 """Client for enqueueing jobs into the backend."""
+
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING
 
-from crazyjob.backends.base import BackendDriver
 from crazyjob.core.exceptions import ConfigurationError
 from crazyjob.core.job import Job, JobRecord
 from crazyjob.core.serializer import Serializer
+
+if TYPE_CHECKING:
+    from crazyjob.backends.base import BackendDriver
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +28,8 @@ class Client:
     def enqueue(
         self,
         job_class: type[Job],
-        args: list | None = None,
-        kwargs: dict | None = None,
+        args: list[object] | None = None,
+        kwargs: dict[str, object] | None = None,
         delay: timedelta | None = None,
         run_at: datetime | None = None,
     ) -> str:
@@ -80,9 +83,7 @@ class Client:
         return job_id
 
 
-def _resolve_run_at(
-    delay: timedelta | None, run_at: datetime | None
-) -> datetime | None:
+def _resolve_run_at(delay: timedelta | None, run_at: datetime | None) -> datetime | None:
     """Compute run_at from delay or explicit time."""
     if delay is not None:
         return datetime.utcnow() + delay
@@ -93,8 +94,7 @@ def get_client() -> Client:
     """Get the global client instance."""
     if _client is None:
         raise ConfigurationError(
-            "CrazyJob client not initialized. "
-            "Call set_client() or use a framework integration."
+            "CrazyJob client not initialized. " "Call set_client() or use a framework integration."
         )
     return _client
 

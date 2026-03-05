@@ -1,4 +1,5 @@
 """Flask dashboard adapter — Blueprint + Jinja2 + HTMX."""
+
 from __future__ import annotations
 
 import os
@@ -7,8 +8,6 @@ from typing import Any
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from crazyjob.dashboard.adapters.base import DashboardAdapter
-from crazyjob.dashboard.core.actions import DashboardActions
-from crazyjob.dashboard.core.queries import DashboardQueries
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "..", "templates")
 
@@ -18,9 +17,8 @@ def _get_flash_messages() -> list[tuple[str, str]]:
     try:
         from flask import get_flashed_messages
 
-        return [
-            (cat, msg)
-            for cat, msg in get_flashed_messages(with_categories=True)
+        return [  # type: ignore[misc]
+            (cat, msg) for cat, msg in get_flashed_messages(with_categories=True)
         ]
     except Exception:
         return []
@@ -40,9 +38,10 @@ class FlaskDashboardAdapter(DashboardAdapter):
 
     def _ctx(self, **kwargs: Any) -> dict[str, Any]:
         """Build template context with base_url and flash_messages."""
+        assert request.url_rule is not None
         base_url = request.script_root + request.url_rule.rule.rsplit("/", 1)[0] + "/"
         # For root route ("/"), base_url is already correct
-        if request.url_rule and request.url_rule.rule.endswith("/"):
+        if request.url_rule.rule.endswith("/"):
             base_url = request.url_root.rstrip("/") + url_for(".overview")
             if not base_url.endswith("/"):
                 base_url += "/"

@@ -1,12 +1,15 @@
 """CrazyJob CLI commands — worker, scheduler, migrate, purge."""
+
 from __future__ import annotations
 
 import logging
 import os
+from typing import TYPE_CHECKING
 
 import click
 
-from crazyjob.backends.base import BackendDriver
+if TYPE_CHECKING:
+    from crazyjob.backends.base import BackendDriver
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +46,7 @@ def worker(
 
     queue_list: list[str]
     if all_queues:
-        with backend._cursor() as cur:
+        with backend._cursor() as cur:  # type: ignore[attr-defined]
             cur.execute("SELECT DISTINCT queue FROM cj_jobs;")
             queue_list = [row["queue"] for row in cur.fetchall()]
         if not queue_list:
@@ -112,7 +115,7 @@ def purge(status: str, older_than: str) -> None:
     if status == "dead":
         if is_sqlite:
             sql = "DELETE FROM cj_dead_letters WHERE killed_at < datetime('now', ? || ' days');"
-            params: tuple = (f"-{days}",)
+            params: tuple[object, ...] = (f"-{days}",)
         else:
             sql = "DELETE FROM cj_dead_letters WHERE killed_at < NOW() - INTERVAL '%s days';"
             params = (days,)
@@ -130,7 +133,7 @@ def purge(status: str, older_than: str) -> None:
             )
             params = (status, days)
 
-    with backend._cursor() as cur:
+    with backend._cursor() as cur:  # type: ignore[attr-defined]
         cur.execute(sql, params)
 
     click.echo(f"Purged {status} jobs older than {older_than}.")

@@ -1,13 +1,16 @@
 """Middleware pipeline for wrapping job execution."""
+
 from __future__ import annotations
 
-from abc import ABC
-from typing import Any, Callable
+from typing import TYPE_CHECKING
 
-from crazyjob.core.job import JobRecord
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from crazyjob.core.job import JobRecord
 
 
-class Middleware(ABC):
+class Middleware:
     """Base class for job execution middleware.
 
     Override any of the hook methods to add behavior before, after, or on
@@ -17,7 +20,7 @@ class Middleware(ABC):
     def before_perform(self, job: JobRecord) -> None:
         """Called before perform() runs."""
 
-    def after_perform(self, job: JobRecord, result: Any) -> None:
+    def after_perform(self, job: JobRecord, result: object) -> None:
         """Called after perform() succeeds."""
 
     def on_failure(self, job: JobRecord, error: Exception) -> None:
@@ -34,7 +37,7 @@ class MiddlewarePipeline:
         """Add a middleware to the pipeline."""
         self._middlewares.append(middleware)
 
-    def run(self, job: JobRecord, perform_fn: Callable) -> Any:
+    def run(self, job: JobRecord, perform_fn: Callable[[], object]) -> object:
         """Execute perform_fn wrapped by all registered middleware."""
         for mw in self._middlewares:
             mw.before_perform(job)

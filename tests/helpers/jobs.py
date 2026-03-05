@@ -1,4 +1,5 @@
 """Test helper job classes for E2E tests."""
+
 from __future__ import annotations
 
 import time

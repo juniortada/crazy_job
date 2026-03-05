@@ -1,4 +1,5 @@
 """Dashboard actions — SQLite-compatible SQL."""
+
 from __future__ import annotations
 
 import json
@@ -56,9 +57,7 @@ class SQLiteDashboardActions(DashboardActions):
 
     def bulk_resurrect(self) -> int:
         with self.backend._cursor() as cur:
-            cur.execute(
-                "SELECT id FROM cj_dead_letters WHERE resurrected_at IS NULL;"
-            )
+            cur.execute("SELECT id FROM cj_dead_letters WHERE resurrected_at IS NULL;")
             dead_ids = [row["id"] for row in cur.fetchall()]
 
         count = 0

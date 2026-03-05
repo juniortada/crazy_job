@@ -1,10 +1,14 @@
 """Retry backoff policies for CrazyJob."""
+
 from __future__ import annotations
 
 import random
 from abc import ABC, abstractmethod
 from datetime import timedelta
-from typing import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class BackoffPolicy(ABC):
@@ -24,9 +28,9 @@ class LinearBackoff(BackoffPolicy):
         self.jitter = jitter
 
     def delay_for(self, attempt: int) -> timedelta:
-        seconds = attempt * self.base_seconds
+        seconds: float = attempt * self.base_seconds
         if self.jitter:
-            seconds *= random.uniform(0.9, 1.1)
+            seconds *= random.uniform(0.9, 1.1)  # nosec B311 — jitter, not crypto
         return timedelta(seconds=seconds)
 
 
@@ -38,9 +42,9 @@ class ExponentialBackoff(BackoffPolicy):
         self.jitter = jitter
 
     def delay_for(self, attempt: int) -> timedelta:
-        seconds = (2**attempt) * self.base_seconds
+        seconds: float = (2**attempt) * self.base_seconds
         if self.jitter:
-            seconds *= random.uniform(0.9, 1.1)
+            seconds *= random.uniform(0.9, 1.1)  # nosec B311 — jitter, not crypto
         return timedelta(seconds=seconds)
 
 
@@ -55,9 +59,9 @@ class ExponentialCapBackoff(BackoffPolicy):
         self.jitter = jitter
 
     def delay_for(self, attempt: int) -> timedelta:
-        seconds = min((2**attempt) * self.base_seconds, self.cap_seconds)
+        seconds: float = min((2**attempt) * self.base_seconds, self.cap_seconds)
         if self.jitter:
-            seconds *= random.uniform(0.9, 1.1)
+            seconds *= random.uniform(0.9, 1.1)  # nosec B311 — jitter, not crypto
         return timedelta(seconds=seconds)
 
 
@@ -71,7 +75,7 @@ class _CallablePolicy(BackoffPolicy):
         return self._fn(attempt)
 
 
-def get_backoff_policy(name: str | BackoffPolicy | Callable) -> BackoffPolicy:
+def get_backoff_policy(name: str | BackoffPolicy | Callable[[int], timedelta]) -> BackoffPolicy:
     """Resolve a backoff policy from a string name, instance, or callable."""
     if isinstance(name, BackoffPolicy):
         return name

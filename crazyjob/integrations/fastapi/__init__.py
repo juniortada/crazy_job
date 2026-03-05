@@ -1,14 +1,19 @@
 """FastAPI integration for CrazyJob."""
+
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 
-from crazyjob.backends.base import BackendDriver
 from crazyjob.config import CrazyJobConfig
 from crazyjob.core.client import Client, set_client
 from crazyjob.core.middleware import Middleware, MiddlewarePipeline
 from crazyjob.dashboard.core.factory import create_dashboard_actions, create_dashboard_queries
 from crazyjob.integrations.base import FrameworkIntegration
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from crazyjob.backends.base import BackendDriver
 
 
 class FastAPICrazyJob(FrameworkIntegration):
@@ -25,7 +30,7 @@ class FastAPICrazyJob(FrameworkIntegration):
         })
     """
 
-    def __init__(self, app: Any = None, settings: dict | None = None) -> None:
+    def __init__(self, app: Any = None, settings: dict[str, object] | None = None) -> None:
         self._app = app
         self._settings = settings or {}
         self._backend: BackendDriver | None = None
@@ -33,7 +38,7 @@ class FastAPICrazyJob(FrameworkIntegration):
         if app is not None:
             self.init_app(app)
 
-    def init_app(self, app: Any, settings: dict | None = None) -> None:
+    def init_app(self, app: Any, settings: dict[str, object] | None = None) -> None:
         """Initialize CrazyJob with a FastAPI app."""
         if settings:
             self._settings = settings
@@ -61,7 +66,7 @@ class FastAPICrazyJob(FrameworkIntegration):
         from fastapi import FastAPI
 
         if isinstance(app, FastAPI):
-            original_shutdown = getattr(app, "_crazyjob_shutdown_handlers", [])
+            getattr(app, "_crazyjob_shutdown_handlers", [])
 
             @app.on_event("shutdown")
             def _crazyjob_shutdown() -> None:
@@ -77,7 +82,7 @@ class FastAPICrazyJob(FrameworkIntegration):
         router = adapter.get_mountable()
         app.include_router(router, prefix=url_prefix)
 
-    def wrap_job_context(self, func: Callable) -> Callable:
+    def wrap_job_context(self, func: Callable[..., object]) -> Callable[..., object]:
         # FastAPI has no app context like Flask; jobs run in worker threads
         return func
 

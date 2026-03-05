@@ -1,17 +1,22 @@
 """Cron job scheduler for CrazyJob."""
+
 from __future__ import annotations
 
 import logging
 import signal
 import time
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING
 
 from croniter import croniter
 
-from crazyjob.backends.base import BackendDriver
-from crazyjob.core.client import Client
 from crazyjob.core.job import Job, JobRecord
+
+if TYPE_CHECKING:
+    import types
+    from collections.abc import Callable
+
+    from crazyjob.backends.base import BackendDriver
 
 logger = logging.getLogger(__name__)
 
@@ -57,19 +62,19 @@ class Scheduler:
         for schedule in due_schedules:
             self._fire_schedule(schedule)
 
-    def _fire_schedule(self, schedule: dict) -> None:
+    def _fire_schedule(self, schedule: dict[str, object]) -> None:
         """Enqueue the job for a due schedule and update timestamps."""
         now = datetime.utcnow()
 
         record = JobRecord(
-            class_path=schedule["class_path"],
-            args=schedule.get("args", []),
-            kwargs=schedule.get("kwargs", {}),
+            class_path=str(schedule["class_path"]),
+            args=schedule.get("args") or [],  # type: ignore[arg-type]
+            kwargs=schedule.get("kwargs") or {},  # type: ignore[arg-type]
         )
         job_id = self.backend.enqueue(record)
 
         # Compute next run time
-        cron = croniter(schedule["cron"], now)
+        cron = croniter(str(schedule["cron"]), now)
         next_run = cron.get_next(datetime)
 
         self.backend.update_schedule_timestamps(
@@ -89,12 +94,12 @@ class Scheduler:
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
 
-    def _handle_signal(self, signum: int, frame: Any) -> None:
+    def _handle_signal(self, signum: int, frame: types.FrameType | None) -> None:
         logger.info("Scheduler received signal %d, shutting down", signum)
         self.shutdown()
 
 
-def schedule(cron: str, name: str) -> Any:
+def schedule(cron: str, name: str) -> Callable[[type[Job]], type[Job]]:
     """Decorator to register a Job subclass as a scheduled cron job.
 
     Usage::

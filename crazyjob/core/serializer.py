@@ -1,9 +1,9 @@
 """JSON serialization with support for datetime and UUID types."""
+
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime
 from uuid import UUID
 
 
@@ -15,17 +15,17 @@ class Serializer:
     """
 
     @staticmethod
-    def dumps(data: Any) -> str:
+    def dumps(data: object) -> str:
         """Serialize data to a JSON string."""
         return json.dumps(data, default=Serializer._encode)
 
     @staticmethod
-    def loads(raw: str) -> Any:
+    def loads(raw: str) -> object:
         """Deserialize a JSON string back to Python objects."""
         return json.loads(raw, object_hook=Serializer._decode)
 
     @staticmethod
-    def _encode(obj: Any) -> Any:
+    def _encode(obj: object) -> dict[str, str]:
         if isinstance(obj, datetime):
             return {"__type__": "datetime", "value": obj.isoformat()}
         if isinstance(obj, UUID):
@@ -33,13 +33,13 @@ class Serializer:
         raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
     @staticmethod
-    def _decode(obj: dict) -> Any:
+    def _decode(obj: dict[str, object]) -> object:
         if "__type__" not in obj:
             return obj
         match obj["__type__"]:
             case "datetime":
-                return datetime.fromisoformat(obj["value"])
+                return datetime.fromisoformat(str(obj["value"]))
             case "uuid":
-                return UUID(obj["value"])
+                return UUID(str(obj["value"]))
             case _:
                 return obj

@@ -1,9 +1,9 @@
 """Dashboard actions — resurrect, cancel, pause, clear, etc."""
+
 from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -63,9 +63,7 @@ class DashboardActions:
     def bulk_resurrect(self) -> int:
         """Resurrect all dead letters. Returns count."""
         with self.backend._cursor() as cur:
-            cur.execute(
-                "SELECT id FROM cj_dead_letters WHERE resurrected_at IS NULL;"
-            )
+            cur.execute("SELECT id FROM cj_dead_letters WHERE resurrected_at IS NULL;")
             dead_ids = [row["id"] for row in cur.fetchall()]
 
         count = 0

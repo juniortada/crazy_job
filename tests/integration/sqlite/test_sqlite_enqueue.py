@@ -1,9 +1,8 @@
 """SQLite backend — enqueue tests."""
+
 from __future__ import annotations
 
 import pytest
-
-from crazyjob.core.job import JobRecord
 
 
 @pytest.mark.integration

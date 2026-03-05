@@ -1,4 +1,5 @@
 """Schema management for CrazyJob PostgreSQL backend."""
+
 from __future__ import annotations
 
 import logging
@@ -18,8 +19,7 @@ def apply_schema(driver: object) -> None:
     migration_file = MIGRATIONS_DIR / "001_initial.sql"
     sql = migration_file.read_text()
 
-    with driver._conn() as conn:  # type: ignore[attr-defined]
-        with conn.cursor() as cur:
-            cur.execute(sql)
+    with driver._conn() as conn, conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute(sql)
 
     logger.info("CrazyJob schema applied successfully")

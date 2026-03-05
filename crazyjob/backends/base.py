@@ -1,11 +1,13 @@
 """BackendDriver — the single interface between the core engine and any storage system."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from crazyjob.core.job import DeadLetterRecord, JobRecord, WorkerRecord
 
 
@@ -31,14 +33,12 @@ class BackendDriver(ABC):
         ...
 
     @abstractmethod
-    def mark_completed(self, job_id: str, result: dict) -> None:
+    def mark_completed(self, job_id: str, result: dict[str, object]) -> None:
         """Mark a job as completed with optional result data."""
         ...
 
     @abstractmethod
-    def mark_failed(
-        self, job_id: str, error: str, retry_at: datetime | None = None
-    ) -> None:
+    def mark_failed(self, job_id: str, error: str, retry_at: datetime | None = None) -> None:
         """Mark a job as failed. If retry_at is set, status becomes 'retrying'."""
         ...
 
@@ -70,4 +70,41 @@ class BackendDriver(ABC):
     @abstractmethod
     def get_dead_letter(self, job_id: str) -> DeadLetterRecord | None:
         """Fetch a dead letter by its original job ID."""
+        ...
+
+    @abstractmethod
+    def close(self) -> None:
+        """Close the backend connection(s)."""
+        ...
+
+    @abstractmethod
+    def get_stale_workers(self, threshold_seconds: int) -> list[WorkerRecord]:
+        """Find workers whose heartbeat is older than the threshold."""
+        ...
+
+    @abstractmethod
+    def get_active_jobs_for_worker(self, worker_id: str) -> list[JobRecord]:
+        """Get all active jobs assigned to a specific worker."""
+        ...
+
+    @abstractmethod
+    def reenqueue_job(self, job_id: str) -> None:
+        """Re-enqueue a job (e.g., from a dead worker)."""
+        ...
+
+    @abstractmethod
+    def mark_worker_stopped(self, worker_id: str) -> None:
+        """Mark a worker as stopped."""
+        ...
+
+    @abstractmethod
+    def fetch_due_schedules(self) -> list[dict[str, object]]:
+        """Fetch schedules that are due to run."""
+        ...
+
+    @abstractmethod
+    def update_schedule_timestamps(
+        self, schedule_id: str, last_run_at: datetime, next_run_at: datetime
+    ) -> None:
+        """Update a schedule's run timestamps after firing."""
         ...

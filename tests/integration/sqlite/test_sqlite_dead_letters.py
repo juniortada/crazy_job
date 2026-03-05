@@ -1,4 +1,5 @@
 """SQLite backend — dead letter tests."""
+
 from __future__ import annotations
 
 import pytest
@@ -7,7 +8,7 @@ import pytest
 @pytest.mark.integration
 class TestSQLiteDeadLetters:
     def test_move_to_dead(self, sqlite_backend, job_factory):
-        record = job_factory.enqueue(sqlite_backend)
+        job_factory.enqueue(sqlite_backend)
         job = sqlite_backend.fetch_next(["default"], "worker-1")
         assert job is not None
 

@@ -1,4 +1,5 @@
 """SQLite dashboard actions tests."""
+
 from __future__ import annotations
 
 import pytest
@@ -49,7 +50,7 @@ class TestSQLiteDashboardActions:
         assert len(kept) == 1
 
     def test_resurrect_dead_letter(self, sqlite_backend, job_factory):
-        record = job_factory.enqueue(sqlite_backend)
+        job_factory.enqueue(sqlite_backend)
         job = sqlite_backend.fetch_next(["default"], "worker-1")
         assert job is not None
         sqlite_backend.move_to_dead(job.id, "test reason")

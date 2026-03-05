@@ -1,4 +1,5 @@
 """Dashboard query layer — SQLite-compatible SQL."""
+
 from __future__ import annotations
 
 import json
@@ -10,7 +11,7 @@ from crazyjob.dashboard.core.queries import DashboardQueries
 class SQLiteDashboardQueries(DashboardQueries):
     """SQLite override of DashboardQueries with compatible SQL syntax."""
 
-    def overview_stats(self) -> dict:
+    def overview_stats(self) -> dict[str, object]:
         sql = """
             SELECT status, COUNT(*) as count
             FROM cj_jobs
@@ -56,7 +57,7 @@ class SQLiteDashboardQueries(DashboardQueries):
         queue: str | None = None,
         page: int = 1,
         per_page: int = 25,
-    ) -> list[dict]:
+    ) -> list[dict[str, object]]:
         offset = (page - 1) * per_page
         if queue:
             sql = """
@@ -77,21 +78,21 @@ class SQLiteDashboardQueries(DashboardQueries):
 
         with self.backend._cursor() as cur:
             cur.execute(sql, params)
-            return [{key: row[key] for key in row.keys()} for row in cur.fetchall()]
+            return [{key: row[key] for key in row.keys()} for row in cur.fetchall()]  # noqa: SIM118
 
-    def list_workers(self) -> list[dict]:
+    def list_workers(self) -> list[dict[str, object]]:
         sql = "SELECT * FROM cj_workers ORDER BY started_at DESC;"
         with self.backend._cursor() as cur:
             cur.execute(sql)
             rows = []
             for row in cur.fetchall():
-                d = {key: row[key] for key in row.keys()}
+                d = {key: row[key] for key in row.keys()}  # noqa: SIM118
                 if isinstance(d.get("queues"), str):
                     d["queues"] = json.loads(d["queues"])
                 rows.append(d)
             return rows
 
-    def list_dead_letters(self, page: int = 1, per_page: int = 25) -> list[dict]:
+    def list_dead_letters(self, page: int = 1, per_page: int = 25) -> list[dict[str, object]]:
         offset = (page - 1) * per_page
         sql = """
             SELECT * FROM cj_dead_letters
@@ -102,14 +103,14 @@ class SQLiteDashboardQueries(DashboardQueries):
             cur.execute(sql, (per_page, offset))
             rows = []
             for row in cur.fetchall():
-                d = {key: row[key] for key in row.keys()}
+                d = {key: row[key] for key in row.keys()}  # noqa: SIM118
                 if isinstance(d.get("original_job"), str):
                     d["original_job"] = json.loads(d["original_job"])
                 rows.append(d)
             return rows
 
-    def list_schedules(self) -> list[dict]:
+    def list_schedules(self) -> list[dict[str, object]]:
         sql = "SELECT * FROM cj_schedules ORDER BY name;"
         with self.backend._cursor() as cur:
             cur.execute(sql)
-            return [{key: row[key] for key in row.keys()} for row in cur.fetchall()]
+            return [{key: row[key] for key in row.keys()} for row in cur.fetchall()]  # noqa: SIM118

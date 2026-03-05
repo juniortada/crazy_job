@@ -1,4 +1,5 @@
 """E2E test: worker heartbeat updates last_beat_at."""
+
 from __future__ import annotations
 
 import threading
@@ -30,6 +31,6 @@ def test_worker_sends_heartbeat(backend) -> None:
             "SELECT * FROM cj_workers WHERE id = %s;",
             (worker.id,),
         )
-        row = cur.fetchone()
+        cur.fetchone()
         # Worker should be deregistered after shutdown
         # But heartbeat should have been sent while running

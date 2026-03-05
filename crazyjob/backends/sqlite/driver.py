@@ -1,4 +1,5 @@
 """SQLite backend driver using BEGIN IMMEDIATE for serialized job claiming."""
+
 from __future__ import annotations
 
 import json
@@ -7,11 +8,14 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Generator
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from crazyjob.backends.base import BackendDriver
 from crazyjob.core.job import DeadLetterRecord, JobRecord, WorkerRecord
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +41,7 @@ class SQLiteDriver(BackendDriver):
         self._lock = threading.Lock()
 
     @contextmanager
-    def _cursor(self) -> Generator[Any, None, None]:
+    def _cursor(self) -> Generator[sqlite3.Cursor, None, None]:
         """Provide a cursor with auto-commit. Compatible with dashboard layer."""
         with self._lock:
             cursor = self._conn.cursor()
@@ -62,18 +66,21 @@ class SQLiteDriver(BackendDriver):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'));
         """
         with self._cursor() as cur:
-            cur.execute(sql, (
-                job.id,
-                job.queue,
-                job.class_path,
-                json.dumps(job.args),
-                json.dumps(job.kwargs),
-                job.status,
-                job.priority,
-                job.attempts,
-                job.max_attempts,
-                job.run_at.isoformat() if job.run_at else None,
-            ))
+            cur.execute(
+                sql,
+                (
+                    job.id,
+                    job.queue,
+                    job.class_path,
+                    json.dumps(job.args),
+                    json.dumps(job.kwargs),
+                    job.status,
+                    job.priority,
+                    job.attempts,
+                    job.max_attempts,
+                    job.run_at.isoformat() if job.run_at else None,
+                ),
+            )
             return job.id
 
     # ── Fetch (atomic claim with BEGIN IMMEDIATE) ─────────────────────────
@@ -85,25 +92,27 @@ class SQLiteDriver(BackendDriver):
         Increments attempts and sets started_at in the same transaction.
         """
         placeholders = ",".join("?" * len(queues))
+        sql = (
+            "SELECT id FROM cj_jobs"
+            " WHERE status IN ('enqueued', 'retrying')"
+            " AND (run_at IS NULL OR run_at <= datetime('now'))"
+            f" AND queue IN ({placeholders})"  # nosec B608
+            " ORDER BY priority ASC, created_at ASC"
+            " LIMIT 1;"
+        )
         with self._lock:
             cursor = self._conn.cursor()
             try:
                 cursor.execute("BEGIN IMMEDIATE")
-                cursor.execute(f"""
-                    SELECT id FROM cj_jobs
-                    WHERE status IN ('enqueued', 'retrying')
-                      AND (run_at IS NULL OR run_at <= datetime('now'))
-                      AND queue IN ({placeholders})
-                    ORDER BY priority ASC, created_at ASC
-                    LIMIT 1;
-                """, queues)
+                cursor.execute(sql, queues)
                 row = cursor.fetchone()
                 if row is None:
                     self._conn.commit()
                     return None
 
                 job_id = row["id"]
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE cj_jobs
                     SET status = 'active',
                         worker_id = ?,
@@ -111,7 +120,9 @@ class SQLiteDriver(BackendDriver):
                         attempts = attempts + 1,
                         updated_at = datetime('now')
                     WHERE id = ?;
-                """, (worker_id, job_id))
+                """,
+                    (worker_id, job_id),
+                )
                 cursor.execute("SELECT * FROM cj_jobs WHERE id = ?;", (job_id,))
                 updated = cursor.fetchone()
                 self._conn.commit()
@@ -122,7 +133,7 @@ class SQLiteDriver(BackendDriver):
 
     # ── Mark completed ───────────────────────────────────────────────────────
 
-    def mark_completed(self, job_id: str, result: dict) -> None:
+    def mark_completed(self, job_id: str, result: dict[str, object]) -> None:
         sql = """
             UPDATE cj_jobs
             SET status = 'completed', completed_at = datetime('now'),
@@ -134,9 +145,7 @@ class SQLiteDriver(BackendDriver):
 
     # ── Mark failed ──────────────────────────────────────────────────────────
 
-    def mark_failed(
-        self, job_id: str, error: str, retry_at: datetime | None = None
-    ) -> None:
+    def mark_failed(self, job_id: str, error: str, retry_at: datetime | None = None) -> None:
         if retry_at is not None:
             sql = """
                 UPDATE cj_jobs
@@ -167,9 +176,7 @@ class SQLiteDriver(BackendDriver):
                 if job_row is None:
                     return
 
-                original_job = {
-                    key: job_row[key] for key in job_row.keys()
-                }
+                original_job = {key: job_row[key] for key in job_row.keys()}  # noqa: SIM118
 
                 dead_id = str(uuid4())
                 cursor.execute(
@@ -208,12 +215,15 @@ class SQLiteDriver(BackendDriver):
                 last_beat_at = datetime('now');
         """
         with self._cursor() as cur:
-            cur.execute(sql, (
-                worker.id,
-                json.dumps(worker.queues),
-                worker.concurrency,
-                worker.status,
-            ))
+            cur.execute(
+                sql,
+                (
+                    worker.id,
+                    json.dumps(worker.queues),
+                    worker.concurrency,
+                    worker.status,
+                ),
+            )
 
     def heartbeat(self, worker_id: str) -> None:
         sql = "UPDATE cj_workers SET last_beat_at = datetime('now') WHERE id = ?;"
@@ -253,7 +263,7 @@ class SQLiteDriver(BackendDriver):
                 id=str(row["id"]),
                 original_job=json.loads(original) if isinstance(original, str) else original,
                 reason=row["reason"],
-                killed_at=self._parse_datetime(row["killed_at"]),
+                killed_at=self._parse_datetime(row["killed_at"]) or datetime.utcnow(),
                 resurrected_at=self._parse_datetime(row["resurrected_at"]),
             )
 
@@ -296,7 +306,7 @@ class SQLiteDriver(BackendDriver):
 
     # ── Scheduler helpers ────────────────────────────────────────────────────
 
-    def fetch_due_schedules(self) -> list[dict]:
+    def fetch_due_schedules(self) -> list[dict[str, object]]:
         """Fetch schedules that are due to run."""
         sql = """
             SELECT * FROM cj_schedules
@@ -305,7 +315,7 @@ class SQLiteDriver(BackendDriver):
         """
         with self._cursor() as cur:
             cur.execute(sql)
-            return [{key: row[key] for key in row.keys()} for row in cur.fetchall()]
+            return [{key: row[key] for key in row.keys()} for row in cur.fetchall()]  # noqa: SIM118
 
     def update_schedule_timestamps(
         self, schedule_id: str, last_run_at: datetime, next_run_at: datetime
@@ -322,45 +332,51 @@ class SQLiteDriver(BackendDriver):
     # ── Row mappers ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _parse_datetime(value: str | None) -> datetime | None:
+    def _parse_datetime(value: object) -> datetime | None:
         """Parse an ISO 8601 datetime string from SQLite."""
-        if value is None:
+        if not isinstance(value, str):
             return None
         # Handle both 'YYYY-MM-DDTHH:MM:SS' and 'YYYY-MM-DD HH:MM:SS' formats
         return datetime.fromisoformat(value)
 
     @staticmethod
-    def _row_to_job_record(row: dict) -> JobRecord:
-        return JobRecord(
-            id=str(row["id"]),
-            queue=row["queue"],
-            class_path=row["class_path"],
-            args=json.loads(row["args"]) if isinstance(row["args"], str) else row["args"],
-            kwargs=json.loads(row["kwargs"]) if isinstance(row["kwargs"], str) else row["kwargs"],
-            status=row["status"],
-            priority=row["priority"],
-            attempts=row["attempts"],
-            max_attempts=row["max_attempts"],
-            run_at=SQLiteDriver._parse_datetime(row.get("run_at")),
-            started_at=SQLiteDriver._parse_datetime(row.get("started_at")),
-            completed_at=SQLiteDriver._parse_datetime(row.get("completed_at")),
-            failed_at=SQLiteDriver._parse_datetime(row.get("failed_at")),
-            error=row.get("error"),
-            worker_id=row.get("worker_id"),
-            created_at=SQLiteDriver._parse_datetime(row["created_at"]) or datetime.utcnow(),
-            updated_at=SQLiteDriver._parse_datetime(row["updated_at"]) or datetime.utcnow(),
-        )
+    def _row_to_job_record(row: dict[str, object]) -> JobRecord:
+        args_raw = row["args"]
+        kwargs_raw = row["kwargs"]
+        parsed = {
+            "id": str(row["id"]),
+            "queue": row["queue"],
+            "class_path": row["class_path"],
+            "args": json.loads(str(args_raw)) if isinstance(args_raw, str) else args_raw,
+            "kwargs": (json.loads(str(kwargs_raw)) if isinstance(kwargs_raw, str) else kwargs_raw),
+            "status": row["status"],
+            "priority": row["priority"],
+            "attempts": row["attempts"],
+            "max_attempts": row["max_attempts"],
+            "run_at": SQLiteDriver._parse_datetime(row.get("run_at")),
+            "started_at": SQLiteDriver._parse_datetime(row.get("started_at")),
+            "completed_at": SQLiteDriver._parse_datetime(row.get("completed_at")),
+            "failed_at": SQLiteDriver._parse_datetime(row.get("failed_at")),
+            "error": row.get("error"),
+            "worker_id": row.get("worker_id"),
+            "created_at": (SQLiteDriver._parse_datetime(row["created_at"]) or datetime.utcnow()),
+            "updated_at": (SQLiteDriver._parse_datetime(row["updated_at"]) or datetime.utcnow()),
+        }
+        return JobRecord(**parsed)  # type: ignore[arg-type]
 
     @staticmethod
-    def _row_to_worker_record(row: dict) -> WorkerRecord:
+    def _row_to_worker_record(row: dict[str, object]) -> WorkerRecord:
         queues_raw = row["queues"]
-        queues = json.loads(queues_raw) if isinstance(queues_raw, str) else queues_raw
-        return WorkerRecord(
-            id=row["id"],
-            queues=queues,
-            concurrency=row["concurrency"],
-            status=row["status"],
-            current_job_id=row.get("current_job_id"),
-            started_at=SQLiteDriver._parse_datetime(row["started_at"]) or datetime.utcnow(),
-            last_beat_at=SQLiteDriver._parse_datetime(row["last_beat_at"]) or datetime.utcnow(),
-        )
+        queues = json.loads(str(queues_raw)) if isinstance(queues_raw, str) else queues_raw
+        parsed = {
+            "id": row["id"],
+            "queues": queues,
+            "concurrency": row["concurrency"],
+            "status": row["status"],
+            "current_job_id": row.get("current_job_id"),
+            "started_at": (SQLiteDriver._parse_datetime(row["started_at"]) or datetime.utcnow()),
+            "last_beat_at": (
+                SQLiteDriver._parse_datetime(row["last_beat_at"]) or datetime.utcnow()
+            ),
+        }
+        return WorkerRecord(**parsed)  # type: ignore[arg-type]

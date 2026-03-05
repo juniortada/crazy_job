@@ -1,4 +1,5 @@
 """Unit tests for retry backoff policies."""
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -76,7 +77,9 @@ class TestGetBackoffPolicy:
         assert get_backoff_policy(policy) is policy
 
     def test_wraps_callable(self) -> None:
-        fn = lambda attempt: timedelta(seconds=attempt * 10)
+        def fn(attempt):
+            return timedelta(seconds=attempt * 10)
+
         policy = get_backoff_policy(fn)
         assert policy.delay_for(3) == timedelta(seconds=30)
 

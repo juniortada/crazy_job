@@ -1,7 +1,6 @@
 """E2E test: scheduler fires a cron job."""
-from __future__ import annotations
 
-from datetime import datetime
+from __future__ import annotations
 
 import pytest
 

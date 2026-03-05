@@ -1,4 +1,5 @@
 """Dashboard metrics — throughput, latency, error rate calculations."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -49,7 +50,7 @@ class DashboardMetrics:
             row = cur.fetchone()
             if row["total"] == 0:
                 return 0.0
-            return round(row["errors"] / row["total"] * 100, 2)
+            return float(round(row["errors"] / row["total"] * 100, 2))
 
     def queue_depths(self) -> dict[str, int]:
         """Number of enqueued jobs per queue."""

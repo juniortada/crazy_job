@@ -1,4 +1,5 @@
 """SQLite backend — fetch_next tests (serialized writers)."""
+
 from __future__ import annotations
 
 import threading

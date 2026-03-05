@@ -1,11 +1,13 @@
 """DashboardAdapter — abstract base for framework-specific dashboard routing."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from crazyjob.dashboard.core.actions import DashboardActions
-from crazyjob.dashboard.core.queries import DashboardQueries
+if TYPE_CHECKING:
+    from crazyjob.dashboard.core.actions import DashboardActions
+    from crazyjob.dashboard.core.queries import DashboardQueries
 
 
 class DashboardAdapter(ABC):

@@ -1,4 +1,5 @@
 """E2E test: worker retries a failed job."""
+
 from __future__ import annotations
 
 import threading

@@ -1,4 +1,5 @@
 """Integration tests for dashboard queries."""
+
 from __future__ import annotations
 
 import pytest

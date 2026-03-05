@@ -1,11 +1,8 @@
 """Dashboard query layer — pure Python, framework-agnostic."""
+
 from __future__ import annotations
 
-import json
 from typing import Any
-
-from crazyjob.backends.base import BackendDriver
-from crazyjob.core.job import DeadLetterRecord, JobRecord, WorkerRecord
 
 
 class DashboardQueries:
@@ -14,7 +11,7 @@ class DashboardQueries:
     def __init__(self, backend: Any) -> None:
         self.backend = backend
 
-    def overview_stats(self) -> dict:
+    def overview_stats(self) -> dict[str, object]:
         """Returns counts per status, throughput (jobs/min), error rate."""
         sql = """
             SELECT status, COUNT(*) as count
@@ -48,9 +45,7 @@ class DashboardQueries:
         with self.backend._cursor() as cur:
             cur.execute(sql_error)
             row = cur.fetchone()
-            error_rate = (
-                (row["failed"] / row["total"] * 100) if row["total"] > 0 else 0.0
-            )
+            error_rate = (row["failed"] / row["total"] * 100) if row["total"] > 0 else 0.0
 
         return {
             "counts": counts,
@@ -64,7 +59,7 @@ class DashboardQueries:
         queue: str | None = None,
         page: int = 1,
         per_page: int = 25,
-    ) -> list[dict]:
+    ) -> list[dict[str, object]]:
         """List jobs filtered by status, with pagination."""
         offset = (page - 1) * per_page
         if queue:
@@ -82,20 +77,20 @@ class DashboardQueries:
                 ORDER BY created_at DESC
                 LIMIT %s OFFSET %s;
             """
-            params = (status, per_page, offset)
+            params = (status, per_page, offset)  # type: ignore[assignment]
 
         with self.backend._cursor() as cur:
             cur.execute(sql, params)
             return [dict(row) for row in cur.fetchall()]
 
-    def list_workers(self) -> list[dict]:
+    def list_workers(self) -> list[dict[str, object]]:
         """List all registered workers."""
         sql = "SELECT * FROM cj_workers ORDER BY started_at DESC;"
         with self.backend._cursor() as cur:
             cur.execute(sql)
             return [dict(row) for row in cur.fetchall()]
 
-    def list_dead_letters(self, page: int = 1, per_page: int = 25) -> list[dict]:
+    def list_dead_letters(self, page: int = 1, per_page: int = 25) -> list[dict[str, object]]:
         """List dead letters with pagination."""
         offset = (page - 1) * per_page
         sql = """
@@ -107,7 +102,7 @@ class DashboardQueries:
             cur.execute(sql, (per_page, offset))
             return [dict(row) for row in cur.fetchall()]
 
-    def list_schedules(self) -> list[dict]:
+    def list_schedules(self) -> list[dict[str, object]]:
         """List all cron schedules."""
         sql = "SELECT * FROM cj_schedules ORDER BY name;"
         with self.backend._cursor() as cur:

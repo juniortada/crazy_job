@@ -1,4 +1,5 @@
 """Unit tests for the base Job class."""
+
 from __future__ import annotations
 
 import pytest

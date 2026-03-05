@@ -1,4 +1,5 @@
 """SQLite backend — retry flow tests."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -9,7 +10,7 @@ import pytest
 @pytest.mark.integration
 class TestSQLiteRetryFlow:
     def test_mark_failed_with_retry(self, sqlite_backend, job_factory):
-        record = job_factory.enqueue(sqlite_backend)
+        job_factory.enqueue(sqlite_backend)
         job = sqlite_backend.fetch_next(["default"], "worker-1")
         assert job is not None
 
@@ -22,7 +23,7 @@ class TestSQLiteRetryFlow:
         assert updated.error == "temporary error"
 
     def test_mark_failed_without_retry(self, sqlite_backend, job_factory):
-        record = job_factory.enqueue(sqlite_backend)
+        job_factory.enqueue(sqlite_backend)
         job = sqlite_backend.fetch_next(["default"], "worker-1")
         assert job is not None
 
@@ -33,7 +34,7 @@ class TestSQLiteRetryFlow:
         assert updated.status == "failed"
 
     def test_mark_completed(self, sqlite_backend, job_factory):
-        record = job_factory.enqueue(sqlite_backend)
+        job_factory.enqueue(sqlite_backend)
         job = sqlite_backend.fetch_next(["default"], "worker-1")
         assert job is not None
 

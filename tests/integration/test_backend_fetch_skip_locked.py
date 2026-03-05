@@ -1,4 +1,5 @@
 """Integration tests for SKIP LOCKED fetch behavior."""
+
 from __future__ import annotations
 
 import threading

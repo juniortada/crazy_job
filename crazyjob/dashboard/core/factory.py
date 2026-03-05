@@ -1,4 +1,5 @@
 """Factory functions for creating backend-specific dashboard instances."""
+
 from __future__ import annotations
 
 from typing import Any

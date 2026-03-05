@@ -1,4 +1,5 @@
 """CrazyJob exception hierarchy."""
+
 from __future__ import annotations
 
 
@@ -30,9 +31,7 @@ class Retry(CrazyJobError):
     Optionally specify a delay in seconds.
     """
 
-    def __init__(
-        self, in_seconds: int | None = None, reason: str | None = None
-    ) -> None:
+    def __init__(self, in_seconds: int | None = None, reason: str | None = None) -> None:
         self.in_seconds = in_seconds
         self.reason = reason
         msg = reason or "Retry requested"

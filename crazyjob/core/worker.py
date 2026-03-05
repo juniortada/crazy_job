@@ -1,4 +1,5 @@
 """Worker engine — fetch loop, thread pool, heartbeat, graceful shutdown."""
+
 from __future__ import annotations
 
 import importlib
@@ -9,13 +10,18 @@ import threading
 import time
 import traceback
 from datetime import datetime, timedelta
-from typing import Any, Callable
+from typing import TYPE_CHECKING
 
-from crazyjob.backends.base import BackendDriver
 from crazyjob.core.exceptions import Retry
 from crazyjob.core.job import Job, JobRecord, WorkerRecord
 from crazyjob.core.middleware import MiddlewarePipeline
 from crazyjob.core.retry import get_backoff_policy
+
+if TYPE_CHECKING:
+    import types
+    from collections.abc import Callable
+
+    from crazyjob.backends.base import BackendDriver
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +43,7 @@ class Worker:
         heartbeat_interval: int = 10,
         dead_worker_threshold: int = 60,
         middleware_pipeline: MiddlewarePipeline | None = None,
-        context_wrapper: Callable | None = None,
+        context_wrapper: Callable[[Callable[[], object]], Callable[[], object]] | None = None,
     ) -> None:
         self.backend = backend
         self._queues = queues
@@ -136,7 +142,10 @@ class Worker:
         instance: Job | None = None
         try:
             instance = self._load_job_class(job)
-            perform_fn: Callable = lambda: instance.perform(*job.args, **job.kwargs)
+
+            def perform_fn() -> object:
+                instance.perform(*job.args, **job.kwargs)
+                return None
 
             if self._context_wrapper:
                 perform_fn = self._context_wrapper(perform_fn)
@@ -186,7 +195,7 @@ class Worker:
         module_path, class_name = job.class_path.rsplit(".", 1)
         module = importlib.import_module(module_path)
         cls = getattr(module, class_name)
-        return cls()
+        return cls()  # type: ignore[no-any-return]
 
     # ── Heartbeat ────────────────────────────────────────────────────────────
 
@@ -244,6 +253,6 @@ class Worker:
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
 
-    def _handle_signal(self, signum: int, frame: Any) -> None:
+    def _handle_signal(self, signum: int, frame: types.FrameType | None) -> None:
         logger.info("Received signal %d, initiating graceful shutdown", signum)
         self.shutdown()

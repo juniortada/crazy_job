@@ -1,4 +1,5 @@
 """E2E test: worker graceful shutdown."""
+
 from __future__ import annotations
 
 import threading
@@ -11,7 +12,7 @@ from crazyjob.core.worker import Worker
 
 @pytest.mark.e2e
 def test_worker_graceful_shutdown(backend, job_factory) -> None:
-    job = job_factory.enqueue(backend, class_path="tests.helpers.jobs.SlowJob")
+    job_factory.enqueue(backend, class_path="tests.helpers.jobs.SlowJob")
 
     worker = Worker(
         backend=backend,

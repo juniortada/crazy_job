@@ -1,8 +1,12 @@
 """CrazyJob configuration dataclass."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass
@@ -18,7 +22,7 @@ class CrazyJobConfig:
     dead_letter_ttl_days: int = 30
     dashboard_enabled: bool = True
     dashboard_prefix: str = "/crazyjob"
-    dashboard_auth: tuple[str, str] | Callable | None = None
+    dashboard_auth: tuple[str, str] | Callable[..., bool] | None = None
     use_sqlalchemy: bool = False
     heartbeat_interval: int = 10
     dead_worker_threshold: int = 60
@@ -44,6 +48,6 @@ class CrazyJobConfig:
         )
 
     @classmethod
-    def from_dict(cls, d: dict) -> CrazyJobConfig:
+    def from_dict(cls, d: dict[str, object]) -> CrazyJobConfig:
         """Build config from a plain dictionary."""
-        return cls(**{k.lower(): v for k, v in d.items()})
+        return cls(**{k.lower(): v for k, v in d.items()})  # type: ignore[arg-type]

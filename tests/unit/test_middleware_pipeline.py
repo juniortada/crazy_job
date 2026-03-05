@@ -1,4 +1,5 @@
 """Unit tests for the middleware pipeline."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, call

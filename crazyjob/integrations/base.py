@@ -1,11 +1,15 @@
 """FrameworkIntegration — abstract base for framework adapters."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 
-from crazyjob.backends.base import BackendDriver
-from crazyjob.config import CrazyJobConfig
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from crazyjob.backends.base import BackendDriver
+    from crazyjob.config import CrazyJobConfig
 
 
 class FrameworkIntegration(ABC):
@@ -36,6 +40,6 @@ class FrameworkIntegration(ABC):
         ...
 
     @abstractmethod
-    def wrap_job_context(self, func: Callable) -> Callable:
+    def wrap_job_context(self, func: Callable[..., object]) -> Callable[..., object]:
         """Wrap job execution inside the framework's request/app context."""
         ...

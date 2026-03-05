@@ -1,4 +1,5 @@
 """Unit tests for the JSON serializer."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

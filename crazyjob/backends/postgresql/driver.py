@@ -1,23 +1,28 @@
 """PostgreSQL backend driver using psycopg2 with SELECT ... FOR UPDATE SKIP LOCKED."""
+
 from __future__ import annotations
 
 import json
 import logging
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Generator
+from typing import TYPE_CHECKING
 
 import psycopg2
+import psycopg2.extensions
 import psycopg2.extras
 import psycopg2.pool
 
 from crazyjob.backends.base import BackendDriver
 from crazyjob.core.job import DeadLetterRecord, JobRecord, WorkerRecord
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
 logger = logging.getLogger(__name__)
 
 # Register UUID adapter for psycopg2
-psycopg2.extras.register_uuid()
+psycopg2.extras.register_uuid()  # type: ignore[no-untyped-call]
 
 
 class PostgreSQLDriver(BackendDriver):
@@ -31,7 +36,7 @@ class PostgreSQLDriver(BackendDriver):
         self._pool = psycopg2.pool.ThreadedConnectionPool(min_conn, max_conn, dsn)
 
     @contextmanager
-    def _conn(self) -> Generator[Any, None, None]:
+    def _conn(self) -> Generator[psycopg2.extensions.connection, None, None]:
         conn = self._pool.getconn()
         try:
             yield conn
@@ -43,10 +48,12 @@ class PostgreSQLDriver(BackendDriver):
             self._pool.putconn(conn)
 
     @contextmanager
-    def _cursor(self) -> Generator[Any, None, None]:
-        with self._conn() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                yield cur
+    def _cursor(self) -> Generator[psycopg2.extras.RealDictCursor, None, None]:
+        with (
+            self._conn() as conn,
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur,
+        ):
+            yield cur
 
     def close(self) -> None:
         """Close all connections in the pool."""
@@ -63,19 +70,23 @@ class PostgreSQLDriver(BackendDriver):
             RETURNING id;
         """
         with self._cursor() as cur:
-            cur.execute(sql, (
-                job.id,
-                job.queue,
-                job.class_path,
-                json.dumps(job.args),
-                json.dumps(job.kwargs),
-                job.status,
-                job.priority,
-                job.attempts,
-                job.max_attempts,
-                job.run_at,
-            ))
+            cur.execute(
+                sql,
+                (
+                    job.id,
+                    job.queue,
+                    job.class_path,
+                    json.dumps(job.args),
+                    json.dumps(job.kwargs),
+                    job.status,
+                    job.priority,
+                    job.attempts,
+                    job.max_attempts,
+                    job.run_at,
+                ),
+            )
             row = cur.fetchone()
+            assert row is not None
             return str(row["id"])
 
     # ── Fetch (atomic claim with SKIP LOCKED) ────────────────────────────────
@@ -117,7 +128,7 @@ class PostgreSQLDriver(BackendDriver):
 
     # ── Mark completed ───────────────────────────────────────────────────────
 
-    def mark_completed(self, job_id: str, result: dict) -> None:
+    def mark_completed(self, job_id: str, result: dict[str, object]) -> None:
         sql = """
             UPDATE cj_jobs
             SET status = 'completed', completed_at = NOW(), updated_at = NOW()
@@ -128,9 +139,7 @@ class PostgreSQLDriver(BackendDriver):
 
     # ── Mark failed ──────────────────────────────────────────────────────────
 
-    def mark_failed(
-        self, job_id: str, error: str, retry_at: datetime | None = None
-    ) -> None:
+    def mark_failed(self, job_id: str, error: str, retry_at: datetime | None = None) -> None:
         if retry_at is not None:
             sql = """
                 UPDATE cj_jobs
@@ -153,35 +162,37 @@ class PostgreSQLDriver(BackendDriver):
     # ── Move to dead letters ─────────────────────────────────────────────────
 
     def move_to_dead(self, job_id: str, reason: str) -> None:
-        with self._conn() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                # Snapshot the job as JSONB
-                cur.execute("SELECT * FROM cj_jobs WHERE id = %s;", (job_id,))
-                job_row = cur.fetchone()
-                if job_row is None:
-                    return
+        with (
+            self._conn() as conn,
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur,
+        ):
+            # Snapshot the job as JSONB
+            cur.execute("SELECT * FROM cj_jobs WHERE id = %s;", (job_id,))
+            job_row = cur.fetchone()
+            if job_row is None:
+                return
 
-                original_job = {
-                    k: (v.isoformat() if isinstance(v, datetime) else v)
-                    for k, v in dict(job_row).items()
-                }
+            original_job = {
+                k: (v.isoformat() if isinstance(v, datetime) else v)
+                for k, v in dict(job_row).items()
+            }
 
-                cur.execute(
-                    """
-                    INSERT INTO cj_dead_letters (original_job, reason, killed_at)
-                    VALUES (%s, %s, NOW());
-                    """,
-                    (json.dumps(original_job, default=str), reason),
-                )
+            cur.execute(
+                """
+                INSERT INTO cj_dead_letters (original_job, reason, killed_at)
+                VALUES (%s, %s, NOW());
+                """,
+                (json.dumps(original_job, default=str), reason),
+            )
 
-                cur.execute(
-                    """
-                    UPDATE cj_jobs
-                    SET status = 'dead', updated_at = NOW()
-                    WHERE id = %s;
-                    """,
-                    (job_id,),
-                )
+            cur.execute(
+                """
+                UPDATE cj_jobs
+                SET status = 'dead', updated_at = NOW()
+                WHERE id = %s;
+                """,
+                (job_id,),
+            )
 
     # ── Worker registry ──────────────────────────────────────────────────────
 
@@ -283,7 +294,7 @@ class PostgreSQLDriver(BackendDriver):
 
     # ── Scheduler helpers ────────────────────────────────────────────────────
 
-    def fetch_due_schedules(self) -> list[dict]:
+    def fetch_due_schedules(self) -> list[dict[str, object]]:
         """Fetch schedules that are due to run, using SKIP LOCKED."""
         sql = """
             SELECT * FROM cj_schedules
@@ -310,37 +321,39 @@ class PostgreSQLDriver(BackendDriver):
     # ── Row mappers ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _row_to_job_record(row: dict) -> JobRecord:
-        return JobRecord(
-            id=str(row["id"]),
-            queue=row["queue"],
-            class_path=row["class_path"],
-            args=row["args"] if isinstance(row["args"], list) else json.loads(row["args"]),
-            kwargs=(
-                row["kwargs"] if isinstance(row["kwargs"], dict) else json.loads(row["kwargs"])
-            ),
-            status=row["status"],
-            priority=row["priority"],
-            attempts=row["attempts"],
-            max_attempts=row["max_attempts"],
-            run_at=row.get("run_at"),
-            started_at=row.get("started_at"),
-            completed_at=row.get("completed_at"),
-            failed_at=row.get("failed_at"),
-            error=row.get("error"),
-            worker_id=row.get("worker_id"),
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
+    def _row_to_job_record(row: dict[str, object]) -> JobRecord:
+        args_raw = row["args"]
+        kwargs_raw = row["kwargs"]
+        parsed = {
+            "id": str(row["id"]),
+            "queue": row["queue"],
+            "class_path": row["class_path"],
+            "args": args_raw if isinstance(args_raw, list) else json.loads(str(args_raw)),
+            "kwargs": (kwargs_raw if isinstance(kwargs_raw, dict) else json.loads(str(kwargs_raw))),
+            "status": row["status"],
+            "priority": row["priority"],
+            "attempts": row["attempts"],
+            "max_attempts": row["max_attempts"],
+            "run_at": row.get("run_at"),
+            "started_at": row.get("started_at"),
+            "completed_at": row.get("completed_at"),
+            "failed_at": row.get("failed_at"),
+            "error": row.get("error"),
+            "worker_id": row.get("worker_id"),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+        return JobRecord(**parsed)  # type: ignore[arg-type]
 
     @staticmethod
-    def _row_to_worker_record(row: dict) -> WorkerRecord:
-        return WorkerRecord(
-            id=row["id"],
-            queues=row["queues"],
-            concurrency=row["concurrency"],
-            status=row["status"],
-            current_job_id=str(row["current_job_id"]) if row.get("current_job_id") else None,
-            started_at=row["started_at"],
-            last_beat_at=row["last_beat_at"],
-        )
+    def _row_to_worker_record(row: dict[str, object]) -> WorkerRecord:
+        parsed = {
+            "id": row["id"],
+            "queues": row["queues"],
+            "concurrency": row["concurrency"],
+            "status": row["status"],
+            "current_job_id": (str(row["current_job_id"]) if row.get("current_job_id") else None),
+            "started_at": row["started_at"],
+            "last_beat_at": row["last_beat_at"],
+        }
+        return WorkerRecord(**parsed)  # type: ignore[arg-type]

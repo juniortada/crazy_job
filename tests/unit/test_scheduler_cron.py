@@ -1,4 +1,5 @@
 """Unit tests for the schedule decorator."""
+
 from __future__ import annotations
 
 import pytest
