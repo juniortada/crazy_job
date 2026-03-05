@@ -1,0 +1,41 @@
+{% extends "crazyjob/base.html" %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Schedules</h1>
+
+{% if schedules %}
+<table class="w-full bg-white rounded-lg shadow">
+    <thead>
+        <tr class="border-b">
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Name</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Cron</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Class</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Enabled</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Last Run At</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Next Run At</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for schedule in schedules %}
+        <tr class="border-b hover:bg-gray-50">
+            <td class="p-3 text-sm">{{ schedule.name }}</td>
+            <td class="p-3 text-sm font-mono">{{ schedule.cron }}</td>
+            <td class="p-3 text-sm">{{ schedule.class_path }}</td>
+            <td class="p-3 text-sm">{{ schedule.enabled }}</td>
+            <td class="p-3 text-sm">{{ schedule.last_run_at }}</td>
+            <td class="p-3 text-sm">{{ schedule.next_run_at }}</td>
+            <td class="p-3 text-sm">
+                <form method="POST" action="{{ url_for('.trigger_schedule', schedule_id=schedule.id) }}">
+                    <button type="submit" class="bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 text-xs">
+                        Trigger
+                    </button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-gray-500">No items found.</p>
+{% endif %}
+{% endblock %}

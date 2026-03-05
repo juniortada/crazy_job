@@ -1,0 +1,54 @@
+name: Lint
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install ".[dev]"
+
+      - name: Ruff (lint + import sort)
+        run: ruff check . --output-format=github
+
+      - name: Black (format check)
+        run: black --check .
+
+      - name: Mypy (type check)
+        run: mypy crazyjob/
+
+      - name: Bandit (security scan)
+        run: bandit -c pyproject.toml -r crazyjob/
+
+      # Enforce that crazyjob/core/ never imports framework packages
+      - name: Import boundary check
+        run: |
+          python - <<'EOF'
+          import ast, sys, pathlib
+
+          FORBIDDEN = {"flask", "django", "fastapi", "sanic", "starlette"}
+          errors = []
+
+          for path in pathlib.Path("crazyjob/core").rglob("*.py"):
+              tree = ast.parse(path.read_text())
+              for node in ast.walk(tree):
+                  if isinstance(node, (ast.Import, ast.ImportFrom)):
+                      names = [a.name for a in getattr(node, "names", [])]
+                      mod = getattr(node, "module", "") or ""
+                      for name in [mod] + names:
+                          if any(name.startswith(f) for f in FORBIDDEN):
+                              errors.append(f"{path}:{node.lineno} imports '{name}'")
+
+          if errors:
+              print("Framework imports found in core layer:")
+              for e in errors: print(" ", e)
+              sys.exit(1)
+          else:
+              print("Import boundary check passed.")
+          EOF

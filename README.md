@@ -61,7 +61,7 @@ crazyjob scheduler
 | **Retry** | Linear, exponential, exponential-capped, or custom callable |
 | **Scheduling** | Cron expressions via `@schedule` decorator |
 | **Dashboard** | Enqueued · Active · Retrying · Completed · Failed · Dead · Workers · Schedules |
-| **Middleware** | Before/after hooks per job, with built-in Sentry and Datadog support |
+| **Middleware** | Before/after hooks per job — write custom middleware for logging, Sentry, Datadog, etc. |
 | **Frameworks** | Flask ✅ · Django 🔵 · FastAPI 🔵 · Sanic 🔵 |
 
 > 🔵 Coming soon
@@ -100,13 +100,13 @@ crazyjob migrate
 ## Roadmap
 
 - [x] Architecture & design
-- [ ] PostgreSQL backend driver
-- [ ] Core engine (Job, Worker, Retry, Scheduler)
-- [ ] Flask integration
-- [ ] Web dashboard
-- [ ] Lint toolchain + test suite
-- [ ] Docker & Docker Compose
-- [ ] CI/CD pipeline
+- [x] PostgreSQL backend driver
+- [x] Core engine (Job, Worker, Retry, Scheduler)
+- [x] Flask integration
+- [x] Web dashboard
+- [x] Lint toolchain + test suite
+- [x] Docker & Docker Compose
+- [x] CI/CD pipeline
 - [ ] PyPI release
 - [ ] Django integration
 - [ ] FastAPI integration

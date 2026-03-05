@@ -1,0 +1,45 @@
+{% extends "crazyjob/base.html" %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Dead Letters</h1>
+
+{% if dead_letters %}
+<div class="mb-4">
+    <form method="POST" action="{{ url_for('.resurrect_all') }}">
+        <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 text-sm">
+            Resurrect All
+        </button>
+    </form>
+</div>
+
+<table class="w-full bg-white rounded-lg shadow">
+    <thead>
+        <tr class="border-b">
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">ID</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Class</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Reason</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Killed At</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for dl in dead_letters %}
+        <tr class="border-b hover:bg-gray-50">
+            <td class="p-3 text-sm font-mono">{{ dl.id }}</td>
+            <td class="p-3 text-sm">{{ dl.original_job.class_path }}</td>
+            <td class="p-3 text-sm" title="{{ dl.reason }}">{{ dl.reason[:100] }}{{ '...' if dl.reason|length > 100 }}</td>
+            <td class="p-3 text-sm">{{ dl.killed_at }}</td>
+            <td class="p-3 text-sm">
+                <form method="POST" action="{{ url_for('.resurrect', dead_id=dl.id) }}">
+                    <button type="submit" class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 text-xs">
+                        Resurrect
+                    </button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-gray-500">No items found.</p>
+{% endif %}
+{% endblock %}

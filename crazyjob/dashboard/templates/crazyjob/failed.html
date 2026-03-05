@@ -1,0 +1,33 @@
+{% extends "crazyjob/base.html" %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Failed Jobs</h1>
+
+{% if jobs %}
+<table class="w-full bg-white rounded-lg shadow">
+    <thead>
+        <tr class="border-b">
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">ID</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Class</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Queue</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Error</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Attempts</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Failed At</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for job in jobs %}
+        <tr class="border-b hover:bg-gray-50">
+            <td class="p-3 text-sm font-mono">{{ job.id }}</td>
+            <td class="p-3 text-sm">{{ job.class_path }}</td>
+            <td class="p-3 text-sm">{{ job.queue }}</td>
+            <td class="p-3 text-sm" title="{{ job.error }}">{{ job.error[:100] }}{{ '...' if job.error|length > 100 }}</td>
+            <td class="p-3 text-sm">{{ job.attempts }}</td>
+            <td class="p-3 text-sm">{{ job.failed_at }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-gray-500">No items found.</p>
+{% endif %}
+{% endblock %}

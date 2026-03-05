@@ -187,14 +187,6 @@ def create_app(config=None):
     return app
 ```
 
-#### Using an existing SQLAlchemy connection
-
-If your app already uses SQLAlchemy, CrazyJob can share the same connection pool:
-
-```python
-app.config["CRAZYJOB_USE_SQLALCHEMY"] = True  # reuses SQLALCHEMY_DATABASE_URI
-```
-
 ---
 
 ### Django
@@ -436,7 +428,7 @@ class NoRetryJob(Job):
 ### Manually Retrying from Within perform()
 
 ```python
-from crazyjob.exceptions import Retry
+from crazyjob import Retry
 
 class SometimesFlaky(Job):
     max_attempts = 5
@@ -517,7 +509,6 @@ crazyjob worker --all-queues --concurrency 8
 | `--processes` | `1` | Number of worker processes (for CPU-bound jobs) |
 | `--poll-interval` | `1.0` | Seconds between fetch attempts when queue is empty |
 | `--shutdown-timeout` | `30` | Seconds to wait for in-flight jobs before force exit |
-| `--config` | auto | Path to Python config file |
 
 ### Running in Production
 
@@ -621,7 +612,6 @@ Navigate to `http://localhost:5000/crazyjob`.
 - ⏸️ Pause / resume a queue
 - 🗑️ Clear all jobs in a queue
 - ▶️ Trigger a schedule manually
-- 🔍 Search jobs by class name, argument, or job ID
 
 ### Securing the Dashboard
 
@@ -655,20 +645,26 @@ app.config["CRAZYJOB_DASHBOARD_AUTH"] = require_admin
 
 ## Middleware
 
-### Built-in Middleware
+### Middleware Overview
+
+CrazyJob provides a `Middleware` abstract base class with three hooks: `before_perform`, `after_perform`, and `on_failure`. You write your own middleware classes to integrate with any logging or monitoring tool.
 
 ```python
-from crazyjob.middleware import (
-    LoggingMiddleware,
-    SentryMiddleware,
-    DatadogMiddleware,
-    NewRelicMiddleware,
-)
+from crazyjob.core.middleware import Middleware
+from crazyjob.core.job import JobRecord
+
+class LoggingMiddleware(Middleware):
+    def before_perform(self, job: JobRecord) -> None:
+        print(f"Starting {job.class_path} (attempt {job.attempts})")
+
+    def after_perform(self, job: JobRecord, result: object) -> None:
+        print(f"Completed {job.class_path}")
+
+    def on_failure(self, job: JobRecord, error: Exception) -> None:
+        print(f"Failed {job.class_path}: {error}")
 
 cj = FlaskCrazyJob(app)
-cj.use(LoggingMiddleware(level="INFO"))
-cj.use(SentryMiddleware())      # reads SENTRY_DSN from env
-cj.use(DatadogMiddleware())     # sends metrics to DogStatsD
+cj.use(LoggingMiddleware())
 ```
 
 ### Writing Custom Middleware
@@ -714,7 +710,6 @@ All settings can be provided via `app.config` (Flask), `settings.py` (Django), o
 | `CRAZYJOB_DASHBOARD_ENABLED` | — | `True` | Enable the web dashboard |
 | `CRAZYJOB_DASHBOARD_PREFIX` | — | `"/crazyjob"` | URL prefix for the dashboard |
 | `CRAZYJOB_DASHBOARD_AUTH` | — | `None` | Tuple, callable, or `None` |
-| `CRAZYJOB_USE_SQLALCHEMY` | — | `False` | Reuse app's SQLAlchemy connection |
 | `CRAZYJOB_HEARTBEAT_INTERVAL` | — | `10` | Worker heartbeat frequency (seconds) |
 | `CRAZYJOB_DEAD_WORKER_THRESHOLD` | — | `60` | Seconds before worker is considered dead |
 
@@ -804,7 +799,7 @@ def upload_file():
 ```python
 # jobs/webhook_jobs.py
 from crazyjob import Job
-from crazyjob.exceptions import Retry
+from crazyjob import Retry
 import httpx
 
 class DeliverWebhookJob(Job):
@@ -951,32 +946,20 @@ class SyncUserJob(Job):
 
 ## Testing
 
-CrazyJob provides a test mode that runs jobs synchronously in the same process, so you don't need a worker or a PostgreSQL database in your test suite.
+### Unit tests (no database needed)
 
-```python
-# conftest.py
-import pytest
-from crazyjob.testing import CrazyJobTestMode
-
-@pytest.fixture(autouse=True)
-def crazyjob_test_mode():
-    with CrazyJobTestMode():
-        yield
-```
-
-**In test mode:**
-- `Job.enqueue()` executes `perform()` immediately and synchronously
-- No database writes occur
-- Assertions work normally
+Test your job's `perform()` method directly — just instantiate the job class and call it:
 
 ```python
 # tests/test_jobs.py
-def test_welcome_email_is_sent(mock_send_email):
+def test_welcome_email_is_sent(mocker):
+    mock_send = mocker.patch("myapp.email.send_email")
     user = UserFactory.create()
 
-    WelcomeEmailJob.enqueue(user_id=user.id)
+    job = WelcomeEmailJob()
+    job.perform(user_id=user.id)
 
-    mock_send_email.assert_called_once_with(
+    mock_send.assert_called_once_with(
         to=user.email,
         subject="Welcome!",
         template="welcome",
@@ -984,17 +967,40 @@ def test_welcome_email_is_sent(mock_send_email):
     )
 ```
 
-**Testing that a job was enqueued without running it:**
+### Integration tests (with PostgreSQL)
+
+Use `pytest-postgresql` to test the full enqueue → fetch → execute cycle with a real database:
 
 ```python
-from crazyjob.testing import assert_enqueued, assert_not_enqueued
+# conftest.py
+import pytest
+from crazyjob.backends.postgresql import PostgreSQLDriver
+from crazyjob.backends.postgresql.schema import apply_schema
+from crazyjob.core.client import Client, set_client
 
-def test_registration_enqueues_welcome_email(client):
-    with CrazyJobTestMode(execute=False):
-        client.post("/register", json={"email": "test@example.com"})
+@pytest.fixture
+def backend(postgresql):
+    dsn = f"postgresql://{postgresql.info.user}@{postgresql.info.host}:{postgresql.info.port}/{postgresql.info.dbname}"
+    driver = PostgreSQLDriver(dsn=dsn)
+    apply_schema(driver)
+    return driver
 
-        assert_enqueued(WelcomeEmailJob, email="test@example.com")
-        assert_not_enqueued(AdminAlertJob)
+@pytest.fixture
+def cj_client(backend):
+    client = Client(backend=backend)
+    set_client(client)
+    return client
+```
+
+```python
+# tests/test_enqueue.py
+def test_job_is_enqueued(cj_client, backend):
+    job_id = WelcomeEmailJob.enqueue(user_id=42)
+
+    record = backend.get_job(job_id)
+    assert record is not None
+    assert record.status == "enqueued"
+    assert record.kwargs == {"user_id": 42}
 ```
 
 ---
@@ -1011,15 +1017,19 @@ SELECT class_path, error, attempts FROM cj_jobs WHERE status = 'failed';
 
 ### Integrating with Sentry
 
+Write a custom middleware to capture exceptions with Sentry:
+
 ```python
 import sentry_sdk
-from crazyjob.middleware import SentryMiddleware
+from crazyjob.core.middleware import Middleware
+
+class SentryMiddleware(Middleware):
+    def on_failure(self, job, error):
+        sentry_sdk.capture_exception(error)
 
 sentry_sdk.init(dsn=os.environ["SENTRY_DSN"])
 cj.use(SentryMiddleware())
 ```
-
-CrazyJob attaches job metadata (job ID, class, queue, attempt number) to each Sentry event automatically.
 
 ### Custom Failure Handler
 
@@ -1046,12 +1056,14 @@ Yes. Use the core directly without any framework integration:
 
 ```python
 from crazyjob.backends.postgresql import PostgreSQLDriver
-from crazyjob.core.client import Client
+from crazyjob.core.client import Client, set_client
+from myapp.jobs import MyJob
 
-backend = PostgreSQLDriver(database_url="postgresql://...")
+backend = PostgreSQLDriver(dsn="postgresql://...")
 client = Client(backend=backend)
+set_client(client)
 
-client.enqueue("myapp.jobs.MyJob", kwargs={"user_id": 1})
+MyJob.enqueue(user_id=1)
 ```
 
 ---
@@ -1083,13 +1095,6 @@ Via CLI:
 ```bash
 crazyjob purge --status completed --older-than 30d
 crazyjob purge --status dead --older-than 7d
-```
-
-Via Python:
-
-```python
-from crazyjob.core.client import Client
-client.purge(status="completed", older_than_days=30)
 ```
 
 ---

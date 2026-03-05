@@ -202,8 +202,8 @@ The single interface between the core engine and any storage system. Defined in 
 
 ```python
 from abc import ABC, abstractmethod
-from typing import Optional
-from crazyjob.core.job import JobRecord
+from datetime import datetime
+from crazyjob.core.job import JobRecord, WorkerRecord, DeadLetterRecord
 
 
 class BackendDriver(ABC):
@@ -214,35 +214,41 @@ class BackendDriver(ABC):
         ...
 
     @abstractmethod
-    def fetch_next(self, queues: list[str]) -> Optional[JobRecord]:
+    def fetch_next(self, queues: list[str]) -> JobRecord | None:
         """
-        Atomically fetch and lock the next available job.
-        Implementation must prevent two workers from picking the same job.
-        PostgreSQL: SELECT ... FOR UPDATE SKIP LOCKED
+        Atomically fetch, lock, and claim the next job.
+        Must increment attempts and set started_at in the SAME transaction.
+        Never split this into two queries. See Queue Poisoning rules in CLAUDE.md.
+        PostgreSQL: WITH ... SELECT FOR UPDATE SKIP LOCKED ... UPDATE ... RETURNING
         """
         ...
-
-    @abstractmethod
-    def mark_active(self, job_id: str, worker_id: str) -> None: ...
 
     @abstractmethod
     def mark_completed(self, job_id: str, result: dict) -> None: ...
 
     @abstractmethod
-    def mark_failed(self, job_id: str, error: str, retry_at=None) -> None: ...
+    def mark_failed(self, job_id: str, error: str, retry_at: datetime | None = None) -> None: ...
 
     @abstractmethod
     def move_to_dead(self, job_id: str, reason: str) -> None: ...
 
     @abstractmethod
-    def register_worker(self, worker: "WorkerRecord") -> None: ...
+    def register_worker(self, worker: WorkerRecord) -> None: ...
 
     @abstractmethod
     def heartbeat(self, worker_id: str) -> None: ...
 
     @abstractmethod
     def deregister_worker(self, worker_id: str) -> None: ...
+
+    @abstractmethod
+    def get_job(self, job_id: str) -> JobRecord | None: ...
+
+    @abstractmethod
+    def get_dead_letter(self, job_id: str) -> DeadLetterRecord | None: ...
 ```
+
+Note: `mark_active` is **not** a separate method. Claiming a job (setting it active, recording `worker_id`, `started_at`, incrementing `attempts`) happens inside `fetch_next` atomically. There is no separate "mark active" step.
 
 ---
 
@@ -329,12 +335,14 @@ Defined in `crazyjob/dashboard/adapters/base.py`. Wraps the pure query logic in 
 from abc import ABC, abstractmethod
 from typing import Any
 from crazyjob.dashboard.core.queries import DashboardQueries
+from crazyjob.dashboard.core.actions import DashboardActions
 
 
 class DashboardAdapter(ABC):
 
-    def __init__(self, queries: DashboardQueries):
-        self.q = queries  # Pure SQL logic, framework-agnostic
+    def __init__(self, queries: DashboardQueries, actions: DashboardActions) -> None:
+        self.q = queries    # Pure SQL logic, framework-agnostic
+        self.a = actions    # Job actions (resurrect, cancel, pause, etc.)
 
     @abstractmethod
     def get_mountable(self) -> Any:
@@ -428,30 +436,38 @@ Five tables power the entire system. All table names are prefixed with `cj_` to 
 
 CrazyJob uses PostgreSQL's `SELECT ... FOR UPDATE SKIP LOCKED` to safely distribute jobs across workers without any external lock manager.
 
+The fetch-and-claim must be a **single atomic operation**. Never split this into two queries.
+
 ```sql
--- Worker fetch query (simplified)
-BEGIN;
-
-SELECT *
-FROM cj_jobs
-WHERE status IN ('enqueued', 'retrying')
-  AND (run_at IS NULL OR run_at <= NOW())
-  AND queue = ANY(:queues)
-ORDER BY priority ASC, created_at ASC
-LIMIT 1
-FOR UPDATE SKIP LOCKED;
-
--- If a row is returned, immediately mark it active
+-- Worker fetch query — atomic CTE (fetch + claim in one statement)
+WITH next_job AS (
+    SELECT id FROM cj_jobs
+    WHERE status IN ('enqueued', 'retrying')
+      AND (run_at IS NULL OR run_at <= NOW())
+      AND queue = ANY(:queues)
+    ORDER BY priority ASC, created_at ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+)
 UPDATE cj_jobs
-SET status = 'active',
+SET
+    status     = 'active',
+    worker_id  = :worker_id,
     started_at = NOW(),
-    worker_id = :worker_id
-WHERE id = :job_id;
-
-COMMIT;
+    attempts   = attempts + 1,
+    updated_at = NOW()
+FROM next_job
+WHERE cj_jobs.id = next_job.id
+RETURNING cj_jobs.*;
 ```
 
-`SKIP LOCKED` means any row already locked by another worker is transparently skipped, not blocked. This gives true parallel job consumption with no application-level mutex needed.
+This CTE does four things atomically:
+1. Finds the next available job (`SKIP LOCKED` — rows locked by other workers are transparently skipped)
+2. Sets `status = 'active'` and `worker_id`
+3. Records `started_at = NOW()`
+4. **Increments `attempts` before any user code runs** — this is the queue poisoning protection
+
+All four happen in a single `UPDATE ... RETURNING` — no application-level mutex needed.
 
 ---
 
@@ -464,15 +480,17 @@ enqueue()
 ┌──────────┐
 │ enqueued │ ←─────────────────────────────────────────────┐
 └────┬─────┘                                               │
-     │  worker picks up                                    │ resurrect
-     ▼                                                     │ (dashboard)
+     │  worker picks up (fetch_next):                      │ resurrect
+     │  status='active', attempts+=1,                      │ (dashboard)
+     │  worker_id set, started_at set                      │
+     ▼                                                     │
 ┌──────────┐     ┌───────────────┐                ┌───────┴──────┐
 │  active  │────►│  completed ✓  │                │     dead     │
 └────┬─────┘     └───────────────┘                └──────────────┘
      │                                                     ▲
      │  perform() raises                                   │ attempts >= max
      ▼                                                     │
-┌──────────┐     attempts += 1                            │
+┌──────────┐                                              │
 │  failed  │─────────────────────────────────────────────►┘
 └────┬─────┘
      │  attempts < max
@@ -482,34 +500,56 @@ enqueue()
 └──────────┘
 ```
 
+**Key:** `attempts` is incremented atomically inside `fetch_next` (at the `enqueued → active` transition), **not** at the `active → failed` transition. This ensures that even if the worker process crashes during `perform()`, the attempt is already recorded.
+
 ---
 
 ## Worker Engine
 
 ### Fetch Loop
 
-Each worker thread runs an independent fetch loop:
+Each worker thread runs an independent fetch loop. **`attempts` is already incremented by `fetch_next` before any user code runs** — this is the queue poisoning protection.
 
-```
-while running:
-    job = backend.fetch_next(queues)
+```python
+def _run_loop(self) -> None:
+    while self._running:
+        job = self.backend.fetch_next(self._queues)
 
-    if job is None:
-        sleep(poll_interval)   # default: 1s, configurable
-        continue
+        if job is None:
+            time.sleep(self._poll_interval)  # default: 1s, configurable
+            continue
 
+        # At this point, job.attempts has ALREADY been incremented by fetch_next.
+        # If we're at or over the limit, kill immediately — don't run user code.
+        if job.attempts > job.max_attempts:
+            self.backend.move_to_dead(
+                job.id,
+                reason=f"Exceeded max_attempts ({job.max_attempts})"
+            )
+            continue
+
+        self._execute(job)
+
+def _execute(self, job: JobRecord) -> None:
     try:
-        with timeout(job.timeout):
-            context_wrapper(job.perform)(*args, **kwargs)
-        backend.mark_completed(job.id)
+        instance = self._load_job_class(job)
+        self._pipeline.run(job, lambda: instance.perform(*job.args, **job.kwargs))
+        self.backend.mark_completed(job.id, result={})
 
-    except SoftTimeout:
-        backend.mark_failed(job.id, "Soft timeout exceeded")
-        schedule_retry_or_kill(job)
+    except Retry as e:
+        retry_at = datetime.utcnow() + timedelta(seconds=e.in_seconds or 0)
+        self.backend.mark_failed(job.id, error=str(e), retry_at=retry_at)
 
     except Exception as e:
-        backend.mark_failed(job.id, traceback.format_exc())
-        schedule_retry_or_kill(job)
+        error_text = traceback.format_exc()
+        if job.attempts >= job.max_attempts:
+            # This was the last allowed attempt — send to dead letters
+            self.backend.move_to_dead(job.id, reason=error_text)
+        else:
+            # Still have attempts left — schedule retry with backoff
+            policy = get_backoff_policy(type(instance).retry_backoff)
+            retry_at = datetime.utcnow() + policy.delay_for(job.attempts)
+            self.backend.mark_failed(job.id, error=error_text, retry_at=retry_at)
 ```
 
 ### Concurrency Model
@@ -744,7 +784,6 @@ Create a new directory under `crazyjob/backends/` and implement `BackendDriver`:
 
 from crazyjob.backends.base import BackendDriver
 from crazyjob.core.job import JobRecord
-from typing import Optional
 
 
 class MyBackendDriver(BackendDriver):
@@ -756,8 +795,8 @@ class MyBackendDriver(BackendDriver):
         # Write job to your storage system
         ...
 
-    def fetch_next(self, queues: list[str]) -> Optional[JobRecord]:
-        # Atomically fetch and lock the next job
+    def fetch_next(self, queues: list[str]) -> JobRecord | None:
+        # Atomically fetch, lock, claim, and increment attempts
         # Must guarantee no two workers receive the same job
         ...
 
@@ -1200,24 +1239,33 @@ def test_enqueue_sets_correct_initial_state(backend, job_factory):
     assert record.started_at is None
 
 
-def test_mark_failed_increments_attempts(backend, job_factory):
+def test_fetch_next_increments_attempts(backend, job_factory):
+    """fetch_next atomically claims the job AND increments attempts."""
     job = job_factory.enqueue(backend)
-    backend.mark_active(job.id, worker_id="worker-1")
+    fetched = backend.fetch_next(queues=["default"])
+
+    assert fetched is not None
+    assert fetched.attempts == 1
+    assert fetched.status == "active"
+    assert fetched.worker_id is not None
+    assert fetched.started_at is not None
+
+
+def test_mark_failed_records_error(backend, job_factory):
+    job = job_factory.enqueue(backend)
+    backend.fetch_next(queues=["default"])  # claims + increments attempts
     backend.mark_failed(job.id, error="Something went wrong")
 
     record = backend.get_job(job.id)
-    assert record.attempts == 1
     assert record.status == "failed"
     assert "Something went wrong" in record.error
 
 
 def test_job_moves_to_dead_after_max_attempts(backend, job_factory):
-    job = job_factory.enqueue(backend, max_attempts=3)
+    job = job_factory.enqueue(backend, max_attempts=1)
 
-    for _ in range(3):
-        backend.mark_active(job.id, worker_id="worker-1")
-        backend.mark_failed(job.id, error="err")
-
+    # fetch_next increments attempts to 1 (== max_attempts)
+    backend.fetch_next(queues=["default"])
     backend.move_to_dead(job.id, reason="Exhausted retries")
 
     record = backend.get_job(job.id)

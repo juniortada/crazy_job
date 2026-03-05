@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrazyJob Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <nav class="bg-indigo-600 text-white p-4">
+        <div class="container mx-auto flex items-center justify-between">
+            <a href="{{ url_for('.overview') }}" class="text-xl font-bold">CrazyJob</a>
+            <div class="space-x-4 text-sm">
+                <a href="{{ url_for('.overview') }}" class="hover:underline">Overview</a>
+                <a href="{{ url_for('.queues') }}" class="hover:underline">Enqueued</a>
+                <a href="{{ url_for('.active') }}" class="hover:underline">Active</a>
+                <a href="{{ url_for('.scheduled') }}" class="hover:underline">Scheduled</a>
+                <a href="{{ url_for('.retrying') }}" class="hover:underline">Retrying</a>
+                <a href="{{ url_for('.completed') }}" class="hover:underline">Completed</a>
+                <a href="{{ url_for('.failed') }}" class="hover:underline">Failed</a>
+                <a href="{{ url_for('.dead') }}" class="hover:underline">Dead</a>
+                <a href="{{ url_for('.workers') }}" class="hover:underline">Workers</a>
+                <a href="{{ url_for('.schedules') }}" class="hover:underline">Schedules</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mx-auto p-6">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="mb-4 p-3 rounded {{ 'bg-green-100 text-green-800' if category == 'success' else 'bg-red-100 text-red-800' }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

@@ -1,0 +1,31 @@
+{% extends "crazyjob/base.html" %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Workers</h1>
+
+{% if workers %}
+<table class="w-full bg-white rounded-lg shadow">
+    <thead>
+        <tr class="border-b">
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">ID</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Queues</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Concurrency</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Status</th>
+            <th class="text-left p-3 text-sm font-semibold text-gray-600">Last Beat At</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for worker in workers %}
+        <tr class="border-b hover:bg-gray-50">
+            <td class="p-3 text-sm font-mono">{{ worker.id }}</td>
+            <td class="p-3 text-sm">{{ worker.queues }}</td>
+            <td class="p-3 text-sm">{{ worker.concurrency }}</td>
+            <td class="p-3 text-sm">{{ worker.status }}</td>
+            <td class="p-3 text-sm">{{ worker.last_beat_at }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-gray-500">No items found.</p>
+{% endif %}
+{% endblock %}

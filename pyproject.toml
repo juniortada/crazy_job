@@ -1,0 +1,105 @@
+[project]
+name = "crazyjob"
+version = "0.1.0"
+description = "Framework-agnostic background job processing for Python, powered by PostgreSQL"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "psycopg2-binary>=2.9",
+    "click>=8.1",
+    "croniter>=2.0",
+]
+
+[project.optional-dependencies]
+flask = ["flask>=3.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-mock>=3.12",
+    "pytest-postgresql>=5.0",
+    "factory-boy>=3.3",
+    "ruff>=0.4",
+    "black>=24.0",
+    "mypy>=1.9",
+    "bandit>=1.7",
+    "pre-commit>=3.7",
+    "types-psycopg2",
+    "types-croniter",
+]
+
+[project.scripts]
+crazyjob = "crazyjob.cli.commands:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ── Ruff ──────────────────────────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",  # line length — handled by Black
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["crazyjob"]
+
+# ── Black ─────────────────────────────────────────────────────────────────────
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+# ── Mypy ──────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
+disallow_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["crazyjob.core.*", "crazyjob.backends.*"]
+disallow_any_explicit = true
+
+# ── Bandit ────────────────────────────────────────────────────────────────────
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = ["B101"]
+
+# ── Pytest ────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=crazyjob --cov-report=term-missing --cov-fail-under=85"
+markers = [
+    "unit: pure unit tests, no I/O",
+    "integration: tests that require a real PostgreSQL instance",
+    "e2e: full worker lifecycle tests with real threads",
+]
+
+# ── Coverage ──────────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["crazyjob"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+fail_under = 85

@@ -1,0 +1,62 @@
+services:
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: crazyjob
+      POSTGRES_PASSWORD: crazyjob
+      POSTGRES_DB: crazyjob_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crazyjob"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      target: development
+    command: flask run --host=0.0.0.0 --debug
+    volumes:
+      - .:/app
+    ports:
+      - "5000:5000"
+    environment:
+      FLASK_APP: example/app.py
+      CRAZYJOB_DATABASE_URL: postgresql://crazyjob:crazyjob@db/crazyjob_dev
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      target: development
+    command: crazyjob worker --all-queues --concurrency 4
+    volumes:
+      - .:/app
+    environment:
+      CRAZYJOB_DATABASE_URL: postgresql://crazyjob:crazyjob@db/crazyjob_dev
+    depends_on:
+      db:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: .
+      target: development
+    command: crazyjob scheduler
+    volumes:
+      - .:/app
+    environment:
+      CRAZYJOB_DATABASE_URL: postgresql://crazyjob:crazyjob@db/crazyjob_dev
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
