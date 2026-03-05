@@ -1,6 +1,6 @@
 # CrazyJob — User Guide
 
-> Background job processing for Python web applications. PostgreSQL only. No Redis required.
+> Background job processing for Python web applications. PostgreSQL or SQLite. No Redis required.
 
 ---
 
@@ -10,8 +10,9 @@
 - [Quick Start](#quick-start)
 - [Framework Setup](#framework-setup)
   - [Flask](#flask)
+  - [FastAPI](#fastapi)
+  - [SQLite (Development)](#sqlite-development)
   - [Django](#django) *(coming soon)*
-  - [FastAPI](#fastapi) *(coming soon)*
 - [Defining Jobs](#defining-jobs)
   - [Basic Job](#basic-job)
   - [Job Options Reference](#job-options-reference)
@@ -57,8 +58,8 @@
 
 **Requirements:**
 - Python 3.10+
-- PostgreSQL 12+
-- A Flask, Django, FastAPI, or Sanic application
+- PostgreSQL 12+ (production) or SQLite 3.24+ (development)
+- A Flask, FastAPI, Django, or Sanic application
 
 ```bash
 pip install crazyjob
@@ -67,10 +68,12 @@ pip install crazyjob
 **With optional extras:**
 
 ```bash
-pip install "crazyjob[flask]"       # Flask integration
-pip install "crazyjob[django]"      # Django integration (coming soon)
-pip install "crazyjob[fastapi]"     # FastAPI integration (coming soon)
+pip install "crazyjob[flask]"       # Flask + PostgreSQL
+pip install "crazyjob[fastapi]"     # FastAPI integration
+pip install "crazyjob[postgresql]"  # PostgreSQL driver only (no framework)
 ```
+
+> SQLite is included in Python's standard library — no extra install needed.
 
 ---
 
@@ -218,7 +221,7 @@ urlpatterns = [
 
 ### FastAPI
 
-> **Coming soon.** The FastAPI integration is on the roadmap. The configuration will look like:
+#### Basic setup
 
 ```python
 # main.py
@@ -226,12 +229,66 @@ from fastapi import FastAPI
 from crazyjob.integrations.fastapi import FastAPICrazyJob
 
 app = FastAPI()
-cj = FastAPICrazyJob(
-    database_url="postgresql://user:password@localhost/mydb",
-    queues=["default"],
-)
-cj.init_app(app)
+cj = FastAPICrazyJob(app, settings={
+    "database_url": "postgresql://user:password@localhost/mydb",
+    "queues": ["critical", "default", "low"],
+    "dashboard_enabled": True,
+    "dashboard_prefix": "/crazyjob",
+})
 ```
+
+#### Deferred initialization
+
+```python
+# extensions.py
+from crazyjob.integrations.fastapi import FastAPICrazyJob
+cj = FastAPICrazyJob()
+
+# main.py
+from fastapi import FastAPI
+from extensions import cj
+
+def create_app():
+    app = FastAPI()
+    cj.init_app(app, settings={
+        "database_url": "postgresql://user:password@localhost/mydb",
+    })
+    return app
+```
+
+#### Using SQLite for development
+
+```python
+cj = FastAPICrazyJob(app, settings={
+    "database_url": "sqlite:///crazyjob_dev.db",
+})
+```
+
+---
+
+### SQLite (Development)
+
+SQLite is ideal for local development and testing — no PostgreSQL server required.
+
+```python
+# Flask
+app.config["CRAZYJOB_DATABASE_URL"] = "sqlite:///crazyjob_dev.db"
+
+# FastAPI
+cj = FastAPICrazyJob(app, settings={
+    "database_url": "sqlite:///crazyjob_dev.db",
+})
+
+# CLI
+export CRAZYJOB_DATABASE_URL="sqlite:///crazyjob_dev.db"
+crazyjob migrate
+crazyjob worker --queues default
+```
+
+**Limitations:**
+- Single writer (serialized writes via `BEGIN IMMEDIATE`)
+- No `SELECT ... FOR UPDATE SKIP LOCKED` — uses Python-level locking
+- Suitable for development and single-machine deployments, not high-throughput production
 
 ---
 

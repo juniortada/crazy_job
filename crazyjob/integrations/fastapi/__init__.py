@@ -1,4 +1,4 @@
-"""Flask integration for CrazyJob — init_app pattern."""
+"""FastAPI integration for CrazyJob."""
 from __future__ import annotations
 
 from typing import Any, Callable
@@ -7,61 +7,79 @@ from crazyjob.backends.base import BackendDriver
 from crazyjob.config import CrazyJobConfig
 from crazyjob.core.client import Client, set_client
 from crazyjob.core.middleware import Middleware, MiddlewarePipeline
-from crazyjob.dashboard.adapters.flask import FlaskDashboardAdapter
 from crazyjob.dashboard.core.factory import create_dashboard_actions, create_dashboard_queries
 from crazyjob.integrations.base import FrameworkIntegration
 
 
-class FlaskCrazyJob(FrameworkIntegration):
-    """Flask integration using the init_app pattern."""
+class FastAPICrazyJob(FrameworkIntegration):
+    """FastAPI integration for CrazyJob.
 
-    def __init__(self, app: Any = None) -> None:
+    Usage::
+
+        from fastapi import FastAPI
+        from crazyjob.integrations.fastapi import FastAPICrazyJob
+
+        app = FastAPI()
+        cj = FastAPICrazyJob(app, settings={
+            "database_url": "postgresql://user:pass@localhost/mydb",
+        })
+    """
+
+    def __init__(self, app: Any = None, settings: dict | None = None) -> None:
         self._app = app
+        self._settings = settings or {}
         self._backend: BackendDriver | None = None
         self._pipeline = MiddlewarePipeline()
         if app is not None:
             self.init_app(app)
 
-    def init_app(self, app: Any) -> None:
-        """Initialize CrazyJob with a Flask app."""
+    def init_app(self, app: Any, settings: dict | None = None) -> None:
+        """Initialize CrazyJob with a FastAPI app."""
+        if settings:
+            self._settings = settings
         self._app = app
         config = self.get_config()
         self._backend = self.get_backend()
         self.setup_lifecycle_hooks(app)
 
-        # Set global client
         client = Client(self._backend)
         set_client(client)
+
+        app.state.crazyjob = self
 
         if config.dashboard_enabled:
             self.mount_dashboard(app, config.dashboard_prefix)
 
     def get_config(self) -> CrazyJobConfig:
-        return CrazyJobConfig.from_flask(self._app)
+        return CrazyJobConfig.from_dict(self._settings)
 
     def get_backend(self) -> BackendDriver:
         config = self.get_config()
         return _create_backend(config.database_url)
 
     def setup_lifecycle_hooks(self, app: Any) -> None:
-        @app.teardown_appcontext
-        def close_backend(exc: Exception | None) -> None:
-            # Connection pool cleanup happens at app shutdown, not per request
-            pass
+        from fastapi import FastAPI
+
+        if isinstance(app, FastAPI):
+            original_shutdown = getattr(app, "_crazyjob_shutdown_handlers", [])
+
+            @app.on_event("shutdown")
+            def _crazyjob_shutdown() -> None:
+                if self._backend:
+                    self._backend.close()
 
     def mount_dashboard(self, app: Any, url_prefix: str) -> None:
+        from crazyjob.dashboard.adapters.fastapi import FastAPIDashboardAdapter
+
         queries = create_dashboard_queries(self._backend)
         actions = create_dashboard_actions(self._backend)
-        adapter = FlaskDashboardAdapter(queries, actions)
-        bp = adapter.get_mountable()
-        app.register_blueprint(bp, url_prefix=url_prefix)
+        adapter = FastAPIDashboardAdapter(queries, actions, url_prefix=url_prefix)
+        router = adapter.get_mountable()
+        app.include_router(router, prefix=url_prefix)
 
     def wrap_job_context(self, func: Callable) -> Callable:
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            with self._app.app_context():
-                return func(*args, **kwargs)
-
-        return wrapper
+        # FastAPI has no app context like Flask; jobs run in worker threads
+        return func
 
     def use(self, middleware: Middleware) -> None:
         """Register a global middleware."""
@@ -71,7 +89,7 @@ class FlaskCrazyJob(FrameworkIntegration):
     def backend(self) -> BackendDriver:
         """Access the configured backend driver."""
         if self._backend is None:
-            raise RuntimeError("FlaskCrazyJob not initialized. Call init_app() first.")
+            raise RuntimeError("FastAPICrazyJob not initialized. Call init_app() first.")
         return self._backend
 
     @property

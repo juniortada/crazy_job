@@ -1,6 +1,6 @@
 # CrazyJob — Architecture & Framework Internals
 
-> Framework-agnostic background job processing for Python web applications, powered by PostgreSQL.
+> Framework-agnostic background job processing for Python web applications, powered by PostgreSQL or SQLite.
 
 ---
 
@@ -18,10 +18,14 @@
   - [BackendDriver](#backenddriver)
   - [FrameworkIntegration](#frameworkintegration)
   - [DashboardAdapter](#dashboardadapter)
-- [PostgreSQL Backend](#postgresql-backend)
-  - [Database Schema](#database-schema)
-  - [Concurrency Strategy](#concurrency-strategy)
-  - [Job Lifecycle](#job-lifecycle)
+- [Storage Backends](#storage-backends)
+  - [PostgreSQL Backend](#postgresql-backend)
+    - [Database Schema](#database-schema)
+    - [Concurrency Strategy](#concurrency-strategy)
+  - [SQLite Backend](#sqlite-backend)
+    - [Type Mapping](#type-mapping)
+    - [Concurrency Strategy (SQLite)](#concurrency-strategy-sqlite)
+- [Job Lifecycle](#job-lifecycle)
 - [Worker Engine](#worker-engine)
   - [Fetch Loop](#fetch-loop)
   - [Concurrency Model](#concurrency-model)
@@ -31,6 +35,9 @@
 - [Middleware Pipeline](#middleware-pipeline)
 - [Scheduler (Cron Jobs)](#scheduler-cron-jobs)
 - [Dashboard Internals](#dashboard-internals)
+  - [Dashboard SQL Compatibility](#dashboard-sql-compatibility)
+- [Flask Integration](#flask-integration)
+- [FastAPI Integration](#fastapi-integration)
 - [Adding a New Framework Integration](#adding-a-new-framework-integration)
 - [Adding a New Storage Backend](#adding-a-new-storage-backend)
 - [Code Quality & Linting](#code-quality--linting)
@@ -58,12 +65,15 @@
 
 ## Overview
 
-CrazyJob is a background job framework inspired by Sidekiq and ActiveJob. It allows Python web applications to enqueue, process, retry, and monitor asynchronous jobs using **PostgreSQL as the only infrastructure dependency** — no Redis, no RabbitMQ, no Celery broker required.
+CrazyJob is a background job framework inspired by Sidekiq and ActiveJob. It allows Python web applications to enqueue, process, retry, and monitor asynchronous jobs using **PostgreSQL or SQLite** — no Redis, no RabbitMQ, no Celery broker required.
 
 It is designed to be **framework-agnostic**: the core engine has zero imports from Flask, Django, FastAPI, or any other web framework. Each framework is supported through a thin integration adapter that implements a well-defined contract.
 
 ```bash
-pip install crazyjob
+pip install crazyjob                     # core only (SQLite built-in)
+pip install "crazyjob[postgresql]"       # + PostgreSQL driver
+pip install "crazyjob[flask]"            # + Flask integration
+pip install "crazyjob[fastapi]"          # + FastAPI integration
 ```
 
 ---
@@ -123,6 +133,9 @@ All SQL queries, metric calculations, and job actions (retry, kill, resurrect) l
 │  ┌──────────────────────────────────────────────┐                  │
 │  │  PostgreSQL Driver  (SELECT ... SKIP LOCKED)  │                  │
 │  └──────────────────────────────────────────────┘                  │
+│  ┌──────────────────────────────────────────────┐                  │
+│  │  SQLite Driver  (BEGIN IMMEDIATE + Lock)      │                  │
+│  └──────────────────────────────────────────────┘                  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -147,39 +160,47 @@ crazyjob/
 │
 ├── backends/                      # Layer 0 — storage drivers
 │   ├── base.py                    # BackendDriver (ABC)
-│   └── postgresql/
+│   ├── postgresql/
+│   │   ├── __init__.py
+│   │   ├── driver.py              # SELECT SKIP LOCKED implementation
+│   │   ├── schema.py              # Auto table creation
+│   │   └── migrations/
+│   │       └── 001_initial.sql
+│   └── sqlite/
 │       ├── __init__.py
-│       ├── driver.py              # SELECT SKIP LOCKED implementation
-│       ├── schema.py              # Auto table creation
+│       ├── driver.py              # BEGIN IMMEDIATE + threading.Lock
+│       ├── schema.py              # apply_schema()
 │       └── migrations/
 │           └── 001_initial.sql
 │
 ├── dashboard/
 │   ├── core/                      # Pure logic — no framework
 │   │   ├── __init__.py
-│   │   ├── queries.py             # All dashboard SQL queries
-│   │   ├── metrics.py             # Throughput, latency, error rates
-│   │   └── actions.py            # Resurrect, cancel, clear queue
+│   │   ├── queries.py             # PostgreSQL dashboard queries
+│   │   ├── metrics.py             # PostgreSQL dashboard metrics
+│   │   ├── actions.py             # PostgreSQL dashboard actions
+│   │   ├── sqlite_queries.py      # SQLite-specific query overrides
+│   │   ├── sqlite_metrics.py      # SQLite-specific metric overrides
+│   │   ├── sqlite_actions.py      # SQLite-specific action overrides
+│   │   └── factory.py             # Auto-detect backend → correct classes
 │   └── adapters/                  # HTTP layer per framework
 │       ├── base.py                # DashboardAdapter (ABC)
-│       ├── flask.py               # Blueprint + Jinja2 + HTMX templates
+│       ├── flask.py               # Blueprint + Jinja2
+│       ├── fastapi.py             # APIRouter + Jinja2Templates
 │       ├── django.py              # urls.py + class-based views (future)
-│       ├── fastapi.py             # APIRouter (future)
 │       └── sanic.py               # Sanic Blueprint (future)
 │
 ├── integrations/                  # Layer 3 — framework adapters
 │   ├── base.py                    # FrameworkIntegration (ABC)
 │   ├── flask/
-│   │   ├── __init__.py            # FlaskCrazyJob (init_app pattern)
-│   │   └── context.py             # App context, teardown, config
+│   │   └── __init__.py            # FlaskCrazyJob (init_app pattern)
+│   ├── fastapi/
+│   │   └── __init__.py            # FastAPICrazyJob (settings dict)
 │   ├── django/                    # Future
 │   │   ├── __init__.py
 │   │   ├── apps.py                # AppConfig
 │   │   └── management/
 │   │       └── commands/          # crazyjob_worker management command
-│   ├── fastapi/                   # Future
-│   │   ├── __init__.py
-│   │   └── lifespan.py
 │   └── sanic/                     # Future
 │       ├── __init__.py
 │       └── listeners.py
@@ -359,9 +380,11 @@ class DashboardAdapter(ABC):
 
 ---
 
-## PostgreSQL Backend
+## Storage Backends
 
-### Database Schema
+### PostgreSQL Backend
+
+#### Database Schema
 
 Five tables power the entire system. All table names are prefixed with `cj_` to avoid conflicts with application tables.
 
@@ -432,7 +455,7 @@ Five tables power the entire system. All table names are prefixed with `cj_` to 
 
 ---
 
-### Concurrency Strategy
+#### Concurrency Strategy
 
 CrazyJob uses PostgreSQL's `SELECT ... FOR UPDATE SKIP LOCKED` to safely distribute jobs across workers without any external lock manager.
 
@@ -471,7 +494,64 @@ All four happen in a single `UPDATE ... RETURNING` — no application-level mute
 
 ---
 
-### Job Lifecycle
+### SQLite Backend
+
+The SQLite driver (`crazyjob/backends/sqlite/driver.py`) provides a lightweight, zero-dependency backend ideal for development, testing, and single-machine deployments.
+
+```python
+from crazyjob.backends.sqlite import SQLiteDriver
+
+backend = SQLiteDriver(database_path=":memory:")  # or "jobs.db"
+```
+
+#### Type Mapping
+
+SQLite has no native support for several PostgreSQL types. The driver maps them as follows:
+
+| PostgreSQL | SQLite | Notes |
+|---|---|---|
+| `TIMESTAMPTZ` | `TEXT` | ISO 8601 strings, parsed via `_parse_datetime()` |
+| `JSONB` | `TEXT` | `json.dumps()` / `json.loads()` |
+| `TEXT[]` (arrays) | `TEXT` | JSON-encoded lists |
+| `ENUM` types | `TEXT CHECK(...)` | Constraint-based validation |
+| `UUID` (gen_random_uuid) | `TEXT` | Python `str(uuid4())` |
+| `NOW()` | `datetime('now')` | SQLite date function |
+| `INTERVAL '5 minutes'` | `datetime('now', '-5 minutes')` | SQLite modifier syntax |
+| `original_job->>'id'` | `json_extract(original_job, '$.id')` | SQLite JSON1 extension |
+
+#### Concurrency Strategy (SQLite)
+
+SQLite is single-writer. CrazyJob uses three mechanisms for safe concurrent access:
+
+1. **`PRAGMA journal_mode=WAL`** — allows concurrent readers while a write is in progress
+2. **`PRAGMA busy_timeout=5000`** — waits up to 5 seconds if the database is locked instead of failing immediately
+3. **`threading.Lock`** — Python-level lock serializes all write operations
+
+The `fetch_next` query uses `BEGIN IMMEDIATE` (exclusive write lock) + SELECT + UPDATE instead of PostgreSQL's `SELECT ... FOR UPDATE SKIP LOCKED`:
+
+```sql
+BEGIN IMMEDIATE;
+
+SELECT * FROM cj_jobs
+WHERE status IN ('enqueued', 'retrying')
+  AND (run_at IS NULL OR run_at <= datetime('now'))
+  AND queue IN (?, ?, ...)
+ORDER BY priority ASC, created_at ASC
+LIMIT 1;
+
+UPDATE cj_jobs
+SET status = 'active', worker_id = ?, started_at = datetime('now'),
+    attempts = attempts + 1, updated_at = datetime('now')
+WHERE id = ?;
+
+COMMIT;
+```
+
+**Limitation:** Since SQLite serializes all writes, throughput is lower than PostgreSQL. This backend is best suited for development, testing, and single-worker deployments.
+
+---
+
+## Job Lifecycle
 
 ```
 enqueue()
@@ -710,24 +790,74 @@ class DashboardActions:
         ...
 ```
 
-The Flask adapter calls these functions directly from its route handlers:
+The framework adapters call these functions directly from their route handlers.
+
+### Dashboard SQL Compatibility
+
+`DashboardQueries`, `DashboardActions`, and `DashboardMetrics` use raw SQL via `backend._cursor()`. Since PostgreSQL and SQLite have different SQL dialects, we have SQLite-specific subclasses:
+
+| Base class (PostgreSQL) | SQLite subclass |
+|---|---|
+| `DashboardQueries` | `SQLiteDashboardQueries` |
+| `DashboardActions` | `SQLiteDashboardActions` |
+| `DashboardMetrics` | `SQLiteDashboardMetrics` |
+
+The **factory module** (`crazyjob/dashboard/core/factory.py`) auto-detects the backend and returns the correct class:
 
 ```python
-# crazyjob/dashboard/adapters/flask.py
+from crazyjob.dashboard.core.factory import (
+    create_dashboard_queries,
+    create_dashboard_actions,
+    create_dashboard_metrics,
+)
 
-@bp.route("/")
-def overview():
-    stats = queries.overview_stats()
-    return render_template("overview.html", stats=stats)
-
-@bp.post("/dead/<dead_id>/resurrect")
-def resurrect(dead_id):
-    new_id = actions.resurrect(dead_id)
-    flash(f"Job re-enqueued as {new_id}", "success")
-    return redirect(url_for(".dead_letters"))
+queries = create_dashboard_queries(backend)   # returns SQLite* if backend is SQLiteDriver
+actions = create_dashboard_actions(backend)
+metrics = create_dashboard_metrics(backend)
 ```
 
-When Django support is added, `DashboardQueries` and `DashboardActions` are reused as-is. Only the route handler file changes.
+Both Flask and FastAPI integrations use this factory to instantiate the correct dashboard classes.
+
+---
+
+## Flask Integration
+
+`FlaskCrazyJob` (`crazyjob/integrations/flask/__init__.py`) follows Flask's standard `init_app()` pattern:
+
+```python
+from crazyjob.integrations.flask import FlaskCrazyJob
+
+cj = FlaskCrazyJob()
+cj.init_app(app)
+```
+
+- **Config**: reads from `app.config["CRAZYJOB_DATABASE_URL"]`
+- **Backend**: auto-detects from URL scheme (`postgresql://` or `sqlite://`)
+- **Lifecycle**: `@app.teardown_appcontext` closes backend
+- **Dashboard**: mounts Flask `Blueprint` at `/crazyjob/`
+- **Job context**: wraps `perform()` in `with app.app_context()`
+
+---
+
+## FastAPI Integration
+
+`FastAPICrazyJob` (`crazyjob/integrations/fastapi/__init__.py`) uses a settings dict instead of framework config:
+
+```python
+from fastapi import FastAPI
+from crazyjob.integrations.fastapi import FastAPICrazyJob
+
+app = FastAPI()
+cj = FastAPICrazyJob(app=app, settings={"database_url": "sqlite:///jobs.db"})
+```
+
+- **Config**: reads from the `settings` dict passed to the constructor
+- **Backend**: auto-detects from URL scheme (`postgresql://` or `sqlite://`)
+- **Lifecycle**: `@app.on_event("shutdown")` closes backend
+- **Dashboard**: mounts Starlette `APIRouter` at `/crazyjob/`; uses `Jinja2Templates` (same templates as Flask); flash messages via query params
+- **Job context**: passthrough (no app context needed — FastAPI has no global request context)
+
+The dashboard adapter (`crazyjob/dashboard/adapters/fastapi.py`) uses POST-Redirect-GET with `status_code=303` for all actions.
 
 ---
 
@@ -739,9 +869,8 @@ To add support for a new framework, create a new directory under `crazyjob/integ
 # crazyjob/integrations/myframework/__init__.py
 
 from crazyjob.integrations.base import FrameworkIntegration
-from crazyjob.backends.postgresql import PostgreSQLDriver
 from crazyjob.config import CrazyJobConfig
-from crazyjob.dashboard.adapters.myframework import MyFrameworkDashboardAdapter
+from crazyjob.dashboard.core.factory import create_dashboard_queries, create_dashboard_actions
 
 
 class MyFrameworkCrazyJob(FrameworkIntegration):
@@ -750,8 +879,8 @@ class MyFrameworkCrazyJob(FrameworkIntegration):
         # Read from your framework's config system
         ...
 
-    def get_backend(self) -> PostgreSQLDriver:
-        # Return a configured driver instance
+    def get_backend(self):
+        # Use _create_backend(url) to auto-detect PostgreSQL or SQLite
         ...
 
     def setup_lifecycle_hooks(self, app) -> None:
@@ -759,9 +888,9 @@ class MyFrameworkCrazyJob(FrameworkIntegration):
         ...
 
     def mount_dashboard(self, app, url_prefix: str) -> None:
-        adapter = MyFrameworkDashboardAdapter(self.queries)
-        mountable = adapter.get_mountable()
-        # Register mountable with your framework's router
+        queries = create_dashboard_queries(self._backend)
+        actions = create_dashboard_actions(self._backend)
+        # Create and mount your dashboard adapter
         ...
 
     def wrap_job_context(self, func):
@@ -842,13 +971,14 @@ name = "crazyjob"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-    "psycopg2-binary>=2.9",
     "click>=8.1",
     "croniter>=2.0",
 ]
 
 [project.optional-dependencies]
-flask = ["flask>=3.0"]
+postgresql = ["psycopg2-binary>=2.9"]
+flask = ["flask>=3.0", "psycopg2-binary>=2.9"]
+fastapi = ["fastapi>=0.100", "uvicorn>=0.25", "jinja2>=3.1"]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
@@ -860,6 +990,12 @@ dev = [
     "mypy>=1.9",
     "bandit>=1.7",
     "pre-commit>=3.7",
+    "psycopg2-binary>=2.9",
+    "httpx>=0.25",
+    "fastapi>=0.100",
+    "uvicorn>=0.25",
+    "jinja2>=3.1",
+    "flask>=3.0",
 ]
 
 [project.scripts]
@@ -919,8 +1055,8 @@ testpaths = ["tests"]
 addopts = "--cov=crazyjob --cov-report=term-missing --cov-fail-under=85"
 markers = [
     "unit: pure unit tests, no I/O",
-    "integration: tests that hit a real PostgreSQL instance",
-    "e2e: full worker lifecycle tests",
+    "integration: tests that require a database (PostgreSQL or SQLite)",
+    "e2e: full worker lifecycle tests with real threads",
 ]
 
 # ── Coverage ──────────────────────────────────────────────────────────────────
@@ -1052,7 +1188,7 @@ jobs:
 ```
 tests/
 │
-├── conftest.py                    # Shared fixtures (app, backend, db session)
+├── conftest.py                    # Shared fixtures (app, backend, db session, sqlite_backend)
 ├── factories.py                   # factory_boy factories for JobRecord, etc.
 │
 ├── unit/                          # Pure unit tests — no I/O, no DB
@@ -1061,15 +1197,23 @@ tests/
 │   ├── test_job_base_class.py
 │   ├── test_middleware_pipeline.py
 │   ├── test_config.py
-│   └── test_scheduler_cron.py
+│   ├── test_scheduler_cron.py
+│   └── test_fastapi_integration.py    # FastAPI config, backend detection, middleware
 │
-├── integration/                   # Hit a real PostgreSQL (via pytest-postgresql)
-│   ├── test_backend_enqueue.py
+├── integration/                   # Hit a real database
+│   ├── test_backend_enqueue.py        # PostgreSQL enqueue tests
 │   ├── test_backend_fetch_skip_locked.py
 │   ├── test_backend_retry_flow.py
 │   ├── test_backend_dead_letters.py
 │   ├── test_dashboard_queries.py
-│   └── test_dashboard_actions.py
+│   ├── test_dashboard_actions.py
+│   └── sqlite/                        # SQLite-specific (in-memory, no setup)
+│       ├── test_sqlite_enqueue.py
+│       ├── test_sqlite_fetch.py
+│       ├── test_sqlite_retry_flow.py
+│       ├── test_sqlite_dead_letters.py
+│       ├── test_sqlite_dashboard_queries.py
+│       └── test_sqlite_dashboard_actions.py
 │
 └── e2e/                           # Full worker lifecycle (spawns real threads)
     ├── test_worker_processes_job.py
@@ -1085,7 +1229,8 @@ tests/
 | Layer | Speed | DB | Threads | What it proves |
 |---|---|---|---|---|
 | **Unit** | < 1s each | ❌ | ❌ | Logic correctness in isolation |
-| **Integration** | < 5s each | ✅ real PG | ❌ | SQL queries, locking, state transitions |
+| **Integration (PG)** | < 5s each | ✅ real PG | ❌ | SQL queries, locking, state transitions |
+| **Integration (SQLite)** | < 1s each | ✅ in-memory | ❌ | SQLite dialect, threading.Lock, type mapping |
 | **E2E** | 5–30s each | ✅ real PG | ✅ real | Full worker lifecycle under real conditions |
 
 ### Unit Tests
@@ -1731,23 +1876,24 @@ jobs:
 
 | Phase | Milestone | Status |
 |---|---|---|
-| 1 | PostgreSQL schema + migrations | 🔲 Planned |
-| 2 | `BackendDriver` + PostgreSQL driver | 🔲 Planned |
-| 3 | Core engine (Job, Queue, Client, Serializer, Retry) | 🔲 Planned |
-| 4 | Worker engine (fetch loop, heartbeat, shutdown) | 🔲 Planned |
-| 5 | `FrameworkIntegration` ABC + Flask adapter | 🔲 Planned |
-| 6 | `DashboardAdapter` ABC + dashboard core queries | 🔲 Planned |
-| 7 | Flask dashboard adapter (Blueprint + HTMX templates) | 🔲 Planned |
-| 8 | CLI (`crazyjob worker`, `crazyjob scheduler`) | 🔲 Planned |
-| 9 | Middleware pipeline + built-in middleware | 🔲 Planned |
-| 10 | Lint toolchain (Ruff, Black, Mypy, Bandit, pre-commit) | 🔲 Planned |
-| 11 | Unit + integration + E2E test suite | 🔲 Planned |
-| 12 | Docker + Docker Compose (dev, CI, prod) | 🔲 Planned |
-| 13 | CI/CD pipeline (GitHub Actions) | 🔲 Planned |
-| 14 | PyPI release + documentation | 🔲 Planned |
+| 1 | PostgreSQL schema + migrations | ✅ Done |
+| 2 | `BackendDriver` + PostgreSQL driver | ✅ Done |
+| 3 | Core engine (Job, Queue, Client, Serializer, Retry) | ✅ Done |
+| 4 | Worker engine (fetch loop, heartbeat, shutdown) | ✅ Done |
+| 5 | `FrameworkIntegration` ABC + Flask adapter | ✅ Done |
+| 6 | `DashboardAdapter` ABC + dashboard core queries | ✅ Done |
+| 7 | Flask dashboard adapter (Blueprint + Jinja2 templates) | ✅ Done |
+| 8 | CLI (`crazyjob worker`, `crazyjob scheduler`) | ✅ Done |
+| 9 | Middleware pipeline | ✅ Done |
+| 10 | Lint toolchain (Ruff, Black, Mypy, Bandit, pre-commit) | ✅ Done |
+| 11 | Unit + integration + E2E test suite | ✅ Done |
+| 12 | Docker + Docker Compose (dev, CI, prod) | ✅ Done |
+| 13 | CI/CD pipeline (GitHub Actions) | ✅ Done |
+| 14 | SQLite backend | ✅ Done |
+| 15 | FastAPI integration + dashboard adapter | ✅ Done |
 | — | Django integration | 🔵 Future |
-| — | FastAPI integration | 🔵 Future |
 | — | Sanic integration | 🔵 Future |
+| — | PyPI release | 🔵 Future |
 
 ---
 

@@ -10,32 +10,30 @@
 <body class="bg-gray-100 min-h-screen">
     <nav class="bg-indigo-600 text-white p-4">
         <div class="container mx-auto flex items-center justify-between">
-            <a href="{{ url_for('.overview') }}" class="text-xl font-bold">CrazyJob</a>
+            <a href="{{ base_url }}" class="text-xl font-bold">CrazyJob</a>
             <div class="space-x-4 text-sm">
-                <a href="{{ url_for('.overview') }}" class="hover:underline">Overview</a>
-                <a href="{{ url_for('.queues') }}" class="hover:underline">Enqueued</a>
-                <a href="{{ url_for('.active') }}" class="hover:underline">Active</a>
-                <a href="{{ url_for('.scheduled') }}" class="hover:underline">Scheduled</a>
-                <a href="{{ url_for('.retrying') }}" class="hover:underline">Retrying</a>
-                <a href="{{ url_for('.completed') }}" class="hover:underline">Completed</a>
-                <a href="{{ url_for('.failed') }}" class="hover:underline">Failed</a>
-                <a href="{{ url_for('.dead') }}" class="hover:underline">Dead</a>
-                <a href="{{ url_for('.workers') }}" class="hover:underline">Workers</a>
-                <a href="{{ url_for('.schedules') }}" class="hover:underline">Schedules</a>
+                <a href="{{ base_url }}" class="hover:underline">Overview</a>
+                <a href="{{ base_url }}queues" class="hover:underline">Enqueued</a>
+                <a href="{{ base_url }}active" class="hover:underline">Active</a>
+                <a href="{{ base_url }}scheduled" class="hover:underline">Scheduled</a>
+                <a href="{{ base_url }}retrying" class="hover:underline">Retrying</a>
+                <a href="{{ base_url }}completed" class="hover:underline">Completed</a>
+                <a href="{{ base_url }}failed" class="hover:underline">Failed</a>
+                <a href="{{ base_url }}dead" class="hover:underline">Dead</a>
+                <a href="{{ base_url }}workers" class="hover:underline">Workers</a>
+                <a href="{{ base_url }}schedules" class="hover:underline">Schedules</a>
             </div>
         </div>
     </nav>
 
     <main class="container mx-auto p-6">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="mb-4 p-3 rounded {{ 'bg-green-100 text-green-800' if category == 'success' else 'bg-red-100 text-red-800' }}">
-                        {{ message }}
-                    </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
+        {% if flash_messages %}
+            {% for category, message in flash_messages %}
+                <div class="mb-4 p-3 rounded {{ 'bg-green-100 text-green-800' if category == 'success' else 'bg-red-100 text-red-800' }}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        {% endif %}
 
         {% block content %}{% endblock %}
     </main>

@@ -1,8 +1,8 @@
 # CrazyJob
 
-**Background job processing for Python web applications — PostgreSQL only, no Redis required.**
+**Background job processing for Python web applications — PostgreSQL or SQLite, no Redis required.**
 
-CrazyJob is a framework-agnostic background job library inspired by Sidekiq and ActiveJob. Define jobs as Python classes, enqueue them from anywhere in your application, and process them with a resilient worker engine backed entirely by PostgreSQL.
+CrazyJob is a framework-agnostic background job library inspired by Sidekiq and ActiveJob. Define jobs as Python classes, enqueue them from anywhere in your application, and process them with a resilient worker engine backed by PostgreSQL (production) or SQLite (development).
 
 ```bash
 pip install crazyjob
@@ -12,8 +12,8 @@ pip install crazyjob
 
 ## Why CrazyJob?
 
-- **Zero extra infrastructure** — uses the PostgreSQL you already have. No Redis, no RabbitMQ, no Celery broker.
-- **Framework-agnostic** — works with Flask today, Django and FastAPI on the way. The core engine has zero framework imports.
+- **Zero extra infrastructure** — uses the PostgreSQL you already have, or SQLite for local dev. No Redis, no RabbitMQ, no Celery broker.
+- **Framework-agnostic** — works with Flask and FastAPI. Django on the way. The core engine has zero framework imports.
 - **Built-in dashboard** — a Sidekiq-style web UI included out of the box. Active jobs, retries, dead letters, workers, cron schedules — all visible and actionable.
 - **Safe concurrency** — uses PostgreSQL's `SELECT ... FOR UPDATE SKIP LOCKED` so multiple workers never pick up the same job, even across machines.
 - **Batteries included** — retry policies, scheduled (cron) jobs, middleware pipeline, graceful shutdown, dead worker detection.
@@ -56,19 +56,21 @@ crazyjob scheduler
 
 | Feature | Details |
 |---|---|
-| **Storage** | PostgreSQL — `SELECT ... FOR UPDATE SKIP LOCKED` |
+| **Storage** | PostgreSQL (`SKIP LOCKED`) or SQLite (WAL mode) |
 | **Concurrency** | Thread pool (I/O-bound) or multiprocessing (CPU-bound) |
 | **Retry** | Linear, exponential, exponential-capped, or custom callable |
 | **Scheduling** | Cron expressions via `@schedule` decorator |
 | **Dashboard** | Enqueued · Active · Retrying · Completed · Failed · Dead · Workers · Schedules |
 | **Middleware** | Before/after hooks per job — write custom middleware for logging, Sentry, Datadog, etc. |
-| **Frameworks** | Flask ✅ · Django 🔵 · FastAPI 🔵 · Sanic 🔵 |
+| **Frameworks** | Flask ✅ · FastAPI ✅ · Django 🔵 · Sanic 🔵 |
 
 > 🔵 Coming soon
 
 ---
 
-## Framework Setup (Flask)
+## Framework Setup
+
+### Flask
 
 ```python
 from flask import Flask
@@ -78,6 +80,18 @@ app = Flask(__name__)
 app.config["CRAZYJOB_DATABASE_URL"] = "postgresql://user:password@localhost/mydb"
 
 cj = FlaskCrazyJob(app)
+```
+
+### FastAPI
+
+```python
+from fastapi import FastAPI
+from crazyjob.integrations.fastapi import FastAPICrazyJob
+
+app = FastAPI()
+cj = FastAPICrazyJob(app, settings={
+    "database_url": "postgresql://user:password@localhost/mydb",
+})
 ```
 
 Apply migrations, then navigate to `/crazyjob` for the dashboard.
@@ -107,9 +121,10 @@ crazyjob migrate
 - [x] Lint toolchain + test suite
 - [x] Docker & Docker Compose
 - [x] CI/CD pipeline
+- [x] SQLite backend driver
+- [x] FastAPI integration
 - [ ] PyPI release
 - [ ] Django integration
-- [ ] FastAPI integration
 
 ---
 

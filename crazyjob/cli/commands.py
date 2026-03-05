@@ -6,12 +6,14 @@ import os
 
 import click
 
+from crazyjob.backends.base import BackendDriver
+
 logger = logging.getLogger(__name__)
 
 
 @click.group()
 def cli() -> None:
-    """CrazyJob — background job processing powered by PostgreSQL."""
+    """CrazyJob — background job processing powered by PostgreSQL or SQLite."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -34,15 +36,13 @@ def worker(
     shutdown_timeout: int,
 ) -> None:
     """Start a CrazyJob worker."""
-    from crazyjob.backends.postgresql.driver import PostgreSQLDriver
     from crazyjob.core.worker import Worker
 
     database_url = _get_database_url()
-    backend = PostgreSQLDriver(dsn=database_url)
+    backend = _create_backend(database_url)
 
     queue_list: list[str]
     if all_queues:
-        # Fetch all distinct queues from the database
         with backend._cursor() as cur:
             cur.execute("SELECT DISTINCT queue FROM cj_jobs;")
             queue_list = [row["queue"] for row in cur.fetchall()]
@@ -64,11 +64,10 @@ def worker(
 @cli.command()
 def scheduler() -> None:
     """Start the CrazyJob cron scheduler."""
-    from crazyjob.backends.postgresql.driver import PostgreSQLDriver
     from crazyjob.core.scheduler import Scheduler
 
     database_url = _get_database_url()
-    backend = PostgreSQLDriver(dsn=database_url)
+    backend = _create_backend(database_url)
 
     s = Scheduler(backend=backend)
     s.run()
@@ -78,15 +77,18 @@ def scheduler() -> None:
 @click.option(
     "--database-url",
     default=None,
-    help="PostgreSQL connection string (or set CRAZYJOB_DATABASE_URL)",
+    help="Database connection string (or set CRAZYJOB_DATABASE_URL)",
 )
 def migrate(database_url: str | None) -> None:
     """Create CrazyJob database tables (cj_*)."""
-    from crazyjob.backends.postgresql.driver import PostgreSQLDriver
-    from crazyjob.backends.postgresql.schema import apply_schema
-
     url = database_url or _get_database_url()
-    backend = PostgreSQLDriver(dsn=url)
+    backend = _create_backend(url)
+
+    if url.startswith("sqlite"):
+        from crazyjob.backends.sqlite.schema import apply_schema
+    else:
+        from crazyjob.backends.postgresql.schema import apply_schema
+
     apply_schema(backend)
     click.echo("CrazyJob schema applied successfully.")
     backend.close()
@@ -97,33 +99,39 @@ def migrate(database_url: str | None) -> None:
 @click.option("--older-than", required=True, help="Age threshold (e.g. 30d, 7d)")
 def purge(status: str, older_than: str) -> None:
     """Purge old jobs by status and age."""
-    from crazyjob.backends.postgresql.driver import PostgreSQLDriver
-
     database_url = _get_database_url()
-    backend = PostgreSQLDriver(dsn=database_url)
+    backend = _create_backend(database_url)
 
-    # Parse older_than (e.g. "30d" → 30 days)
     if older_than.endswith("d"):
         days = int(older_than[:-1])
     else:
         raise click.BadParameter("Use format like '30d' for days")
 
+    is_sqlite = database_url.startswith("sqlite")
+
     if status == "dead":
-        sql = """
-            DELETE FROM cj_dead_letters
-            WHERE killed_at < NOW() - INTERVAL '%s days';
-        """
+        if is_sqlite:
+            sql = "DELETE FROM cj_dead_letters WHERE killed_at < datetime('now', ? || ' days');"
+            params: tuple = (f"-{days}",)
+        else:
+            sql = "DELETE FROM cj_dead_letters WHERE killed_at < NOW() - INTERVAL '%s days';"
+            params = (days,)
     else:
-        sql = """
-            DELETE FROM cj_jobs
-            WHERE status = %s AND updated_at < NOW() - INTERVAL '%s days';
-        """
+        if is_sqlite:
+            sql = (
+                "DELETE FROM cj_jobs "
+                "WHERE status = ? AND updated_at < datetime('now', ? || ' days');"
+            )
+            params = (status, f"-{days}")
+        else:
+            sql = (
+                "DELETE FROM cj_jobs "
+                "WHERE status = %s AND updated_at < NOW() - INTERVAL '%s days';"
+            )
+            params = (status, days)
 
     with backend._cursor() as cur:
-        if status == "dead":
-            cur.execute(sql, (days,))
-        else:
-            cur.execute(sql, (status, days))
+        cur.execute(sql, params)
 
     click.echo(f"Purged {status} jobs older than {older_than}.")
     backend.close()
@@ -138,3 +146,16 @@ def _get_database_url() -> str:
             "Set it or pass --database-url."
         )
     return url
+
+
+def _create_backend(database_url: str) -> BackendDriver:
+    """Create the appropriate backend driver based on URL scheme."""
+    if database_url.startswith("sqlite"):
+        from crazyjob.backends.sqlite.driver import SQLiteDriver
+
+        path = database_url.replace("sqlite:///", "").replace("sqlite://", "")
+        return SQLiteDriver(database_path=path or ":memory:")
+
+    from crazyjob.backends.postgresql.driver import PostgreSQLDriver
+
+    return PostgreSQLDriver(dsn=database_url)

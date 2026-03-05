@@ -3,7 +3,18 @@ from __future__ import annotations
 
 import pytest
 
+from crazyjob.backends.sqlite.driver import SQLiteDriver
+from crazyjob.backends.sqlite.schema import apply_schema as apply_sqlite_schema
 from crazyjob.core.job import JobRecord
+
+
+@pytest.fixture()
+def sqlite_backend():
+    """In-memory SQLite backend for fast testing."""
+    driver = SQLiteDriver(database_path=":memory:")
+    apply_sqlite_schema(driver)
+    yield driver
+    driver.close()
 
 
 @pytest.fixture()
