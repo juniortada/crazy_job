@@ -1,4 +1,4 @@
-# Conveyor — User Guide
+# CrazyJob — User Guide
 
 > Background job processing for Python web applications. PostgreSQL only. No Redis required.
 
@@ -26,6 +26,7 @@
   - [Built-in Strategies](#built-in-strategies)
   - [Custom Retry Logic](#custom-retry-logic)
   - [Disabling Retries](#disabling-retries)
+  - [Manually Retrying from Within perform()](#manually-retrying-from-within-perform)
 - [Scheduled (Cron) Jobs](#scheduled-cron-jobs)
 - [Running Workers](#running-workers)
   - [Basic Usage](#basic-usage)
@@ -60,27 +61,27 @@
 - A Flask, Django, FastAPI, or Sanic application
 
 ```bash
-pip install conveyor-jobs
+pip install crazyjob
 ```
 
 **With optional extras:**
 
 ```bash
-pip install "conveyor-jobs[flask]"       # Flask integration
-pip install "conveyor-jobs[django]"      # Django integration (coming soon)
-pip install "conveyor-jobs[fastapi]"     # FastAPI integration (coming soon)
+pip install "crazyjob[flask]"       # Flask integration
+pip install "crazyjob[django]"      # Django integration (coming soon)
+pip install "crazyjob[fastapi]"     # FastAPI integration (coming soon)
 ```
 
 ---
 
 ## Quick Start
 
-The fastest way to get Conveyor running in a Flask app.
+The fastest way to get CrazyJob running in a Flask app.
 
 **1. Install**
 
 ```bash
-pip install "conveyor-jobs[flask]"
+pip install "crazyjob[flask]"
 ```
 
 **2. Configure and initialize**
@@ -88,19 +89,19 @@ pip install "conveyor-jobs[flask]"
 ```python
 # app.py
 from flask import Flask
-from conveyor.integrations.flask import FlaskConveyor
+from crazyjob.integrations.flask import FlaskCrazyJob
 
 app = Flask(__name__)
-app.config["CONVEYOR_DATABASE_URL"] = "postgresql://user:password@localhost/mydb"
+app.config["CRAZYJOB_DATABASE_URL"] = "postgresql://user:password@localhost/mydb"
 
-conveyor = FlaskConveyor(app)
+cj = FlaskCrazyJob(app)
 ```
 
 **3. Define a job**
 
 ```python
 # jobs/email_jobs.py
-from conveyor import Job
+from crazyjob import Job
 
 class WelcomeEmailJob(Job):
     queue = "mailers"
@@ -113,7 +114,6 @@ class WelcomeEmailJob(Job):
 **4. Enqueue it**
 
 ```python
-# In a route, after user registration
 from jobs.email_jobs import WelcomeEmailJob
 
 @app.route("/register", methods=["POST"])
@@ -126,19 +126,19 @@ def register():
 **5. Create the database tables**
 
 ```bash
-conveyor migrate
+crazyjob migrate
 ```
 
 **6. Start a worker**
 
 ```bash
-conveyor worker --queues mailers,default
+crazyjob worker --queues mailers,default
 ```
 
 **7. Open the dashboard**
 
 ```
-http://localhost:5000/conveyor
+http://localhost:5000/crazyjob
 ```
 
 ---
@@ -152,36 +152,36 @@ http://localhost:5000/conveyor
 ```python
 # app.py
 from flask import Flask
-from conveyor.integrations.flask import FlaskConveyor
+from crazyjob.integrations.flask import FlaskCrazyJob
 
 app = Flask(__name__)
 app.config.update(
-    CONVEYOR_DATABASE_URL="postgresql://user:password@localhost/mydb",
-    CONVEYOR_QUEUES=["critical", "default", "low"],
-    CONVEYOR_DEFAULT_MAX_ATTEMPTS=3,
-    CONVEYOR_DASHBOARD_ENABLED=True,
-    CONVEYOR_DASHBOARD_PREFIX="/conveyor",
+    CRAZYJOB_DATABASE_URL="postgresql://user:password@localhost/mydb",
+    CRAZYJOB_QUEUES=["critical", "default", "low"],
+    CRAZYJOB_DEFAULT_MAX_ATTEMPTS=3,
+    CRAZYJOB_DASHBOARD_ENABLED=True,
+    CRAZYJOB_DASHBOARD_PREFIX="/crazyjob",
 )
 
-conveyor = FlaskConveyor(app)
+cj = FlaskCrazyJob(app)
 ```
 
 #### With application factory pattern
 
 ```python
 # extensions.py
-from conveyor.integrations.flask import FlaskConveyor
-conveyor = FlaskConveyor()
+from crazyjob.integrations.flask import FlaskCrazyJob
+cj = FlaskCrazyJob()
 
 # app.py
 from flask import Flask
-from extensions import conveyor
+from extensions import cj
 
 def create_app(config=None):
     app = Flask(__name__)
     app.config.from_object(config or "config.DevelopmentConfig")
 
-    conveyor.init_app(app)
+    cj.init_app(app)
     # ... other extensions
 
     return app
@@ -189,10 +189,10 @@ def create_app(config=None):
 
 #### Using an existing SQLAlchemy connection
 
-If your app already uses SQLAlchemy, Conveyor can share the same connection pool:
+If your app already uses SQLAlchemy, CrazyJob can share the same connection pool:
 
 ```python
-app.config["CONVEYOR_USE_SQLALCHEMY"] = True  # reuses SQLALCHEMY_DATABASE_URI
+app.config["CRAZYJOB_USE_SQLALCHEMY"] = True  # reuses SQLALCHEMY_DATABASE_URI
 ```
 
 ---
@@ -205,20 +205,20 @@ app.config["CONVEYOR_USE_SQLALCHEMY"] = True  # reuses SQLALCHEMY_DATABASE_URI
 # settings.py
 INSTALLED_APPS = [
     # ...
-    "conveyor.integrations.django",
+    "crazyjob.integrations.django",
 ]
 
-CONVEYOR = {
+CRAZYJOB = {
     "DATABASE_URL": "postgresql://user:password@localhost/mydb",
     "QUEUES": ["critical", "default", "low"],
     "DASHBOARD_ENABLED": True,
-    "DASHBOARD_PREFIX": "/conveyor",
+    "DASHBOARD_PREFIX": "/crazyjob",
 }
 
 # urls.py
 from django.urls import path, include
 urlpatterns = [
-    path("conveyor/", include("conveyor.dashboard.adapters.django.urls")),
+    path("crazyjob/", include("crazyjob.dashboard.adapters.django.urls")),
 ]
 ```
 
@@ -231,14 +231,14 @@ urlpatterns = [
 ```python
 # main.py
 from fastapi import FastAPI
-from conveyor.integrations.fastapi import FastAPIConveyor
+from crazyjob.integrations.fastapi import FastAPICrazyJob
 
 app = FastAPI()
-conveyor = FastAPIConveyor(
+cj = FastAPICrazyJob(
     database_url="postgresql://user:password@localhost/mydb",
     queues=["default"],
 )
-conveyor.init_app(app)
+cj.init_app(app)
 ```
 
 ---
@@ -247,10 +247,10 @@ conveyor.init_app(app)
 
 ### Basic Job
 
-Every job is a class that inherits from `conveyor.Job` and implements a `perform()` method.
+Every job is a class that inherits from `crazyjob.Job` and implements a `perform()` method.
 
 ```python
-from conveyor import Job
+from crazyjob import Job
 
 class SendInvoiceJob(Job):
     queue = "mailers"
@@ -262,8 +262,8 @@ class SendInvoiceJob(Job):
 
 **Rules for `perform()` arguments:**
 - Use only JSON-serializable types: `str`, `int`, `float`, `bool`, `list`, `dict`, `None`
-- `datetime` and `UUID` objects are automatically serialized/deserialized
-- Do not pass ORM model instances — pass IDs instead and re-fetch inside `perform()`
+- `datetime` and `UUID` objects are automatically serialized and deserialized
+- Do not pass ORM model instances — pass IDs and re-fetch inside `perform()`
 
 ```python
 # ✅ Good — pass the ID
@@ -276,14 +276,14 @@ UserReportJob.enqueue(user=user)
 ### Job Options Reference
 
 ```python
-from conveyor import Job
+from crazyjob import Job
 from datetime import timedelta
 
 class MyJob(Job):
     # Queue this job runs in (default: "default")
     queue = "critical"
 
-    # Maximum number of execution attempts before moving to dead letters (default: 3)
+    # Maximum execution attempts before moving to dead letters (default: 3)
     max_attempts = 5
 
     # Retry backoff strategy: "linear", "exponential", "exponential_cap", or a callable
@@ -315,7 +315,7 @@ SendInvoiceJob.enqueue(invoice_id=123, email="user@example.com")
 # With positional arguments
 SendInvoiceJob.enqueue(123, "user@example.com")
 
-# Returns the job ID
+# Capture the job ID
 job_id = SendInvoiceJob.enqueue(invoice_id=123, email="user@example.com")
 print(f"Enqueued job {job_id}")
 ```
@@ -340,7 +340,6 @@ SendInvoiceJob.enqueue_in(timedelta(days=1), invoice_id=123, email="user@example
 ```python
 from datetime import datetime, timezone
 
-# Run at a specific UTC time
 run_time = datetime(2026, 3, 10, 9, 0, tzinfo=timezone.utc)
 SendInvoiceJob.enqueue_at(run_time, invoice_id=123, email="user@example.com")
 ```
@@ -368,10 +367,10 @@ Workers specify which queues they consume:
 
 ```bash
 # Only consume critical and mailers
-conveyor worker --queues critical,mailers
+crazyjob worker --queues critical,mailers
 
 # Consume all queues
-conveyor worker --all-queues
+crazyjob worker --all-queues
 ```
 
 When a worker is assigned multiple queues, it checks them in order — queues listed first are polled first, giving them higher throughput.
@@ -383,7 +382,7 @@ Jobs within the same queue can have a numeric priority. Lower numbers are proces
 ```python
 class UrgentJob(Job):
     queue = "default"
-    priority = 0   # processed first
+    priority = 0    # processed first
 
 class BackgroundJob(Job):
     queue = "default"
@@ -414,7 +413,7 @@ Pass a callable that receives the attempt number (1-indexed) and returns a `time
 
 ```python
 from datetime import timedelta
-from conveyor import Job
+from crazyjob import Job
 
 def fibonacci_backoff(attempt: int) -> timedelta:
     a, b = 1, 1
@@ -434,10 +433,10 @@ class NoRetryJob(Job):
     max_attempts = 1  # fails immediately to dead letters on first error
 ```
 
-### Manually retrying from within perform()
+### Manually Retrying from Within perform()
 
 ```python
-from conveyor.exceptions import Retry
+from crazyjob.exceptions import Retry
 
 class SometimesFlaky(Job):
     max_attempts = 5
@@ -460,7 +459,7 @@ Define recurring jobs using standard cron expressions.
 
 ```python
 # schedules.py
-from conveyor import schedule
+from crazyjob import Job, schedule
 
 # Every day at 9 AM on weekdays
 @schedule(cron="0 9 * * 1-5", name="daily_report")
@@ -486,7 +485,7 @@ class HealthCheckJob(Job):
 Run the scheduler as a separate process:
 
 ```bash
-conveyor scheduler
+crazyjob scheduler
 ```
 
 > The scheduler uses `SELECT ... FOR UPDATE SKIP LOCKED` on the schedules table, so running multiple scheduler processes is safe — only one will fire each schedule at the correct time.
@@ -499,13 +498,13 @@ conveyor scheduler
 
 ```bash
 # Single queue, 5 concurrent threads
-conveyor worker --queues default --concurrency 5
+crazyjob worker --queues default --concurrency 5
 
 # Multiple queues (polled in order)
-conveyor worker --queues critical,mailers,default --concurrency 10
+crazyjob worker --queues critical,mailers,default --concurrency 10
 
 # All queues
-conveyor worker --all-queues --concurrency 8
+crazyjob worker --all-queues --concurrency 8
 ```
 
 ### CLI Options
@@ -525,10 +524,10 @@ conveyor worker --all-queues --concurrency 8
 **Systemd service:**
 
 ```ini
-# /etc/systemd/system/conveyor-worker.service
+# /etc/systemd/system/crazyjob-worker.service
 
 [Unit]
-Description=Conveyor Worker
+Description=CrazyJob Worker
 After=network.target postgresql.service
 
 [Service]
@@ -536,8 +535,8 @@ Type=simple
 User=appuser
 WorkingDirectory=/var/www/myapp
 Environment=FLASK_APP=app.py
-Environment=DATABASE_URL=postgresql://user:password@localhost/mydb
-ExecStart=/var/www/myapp/venv/bin/conveyor worker --queues critical,default,mailers --concurrency 10
+Environment=CRAZYJOB_DATABASE_URL=postgresql://user:password@localhost/mydb
+ExecStart=/var/www/myapp/venv/bin/crazyjob worker --queues critical,default,mailers --concurrency 10
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -548,15 +547,14 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable conveyor-worker
-sudo systemctl start conveyor-worker
+sudo systemctl enable crazyjob-worker
+sudo systemctl start crazyjob-worker
 ```
 
 **Docker:**
 
 ```dockerfile
-# Add to your existing Dockerfile
-CMD ["conveyor", "worker", "--all-queues", "--concurrency", "10"]
+CMD ["crazyjob", "worker", "--all-queues", "--concurrency", "10"]
 ```
 
 ```yaml
@@ -568,17 +566,17 @@ services:
 
   worker:
     build: .
-    command: conveyor worker --all-queues --concurrency 10
+    command: crazyjob worker --all-queues --concurrency 10
     environment:
-      - DATABASE_URL=postgresql://user:password@db/mydb
+      - CRAZYJOB_DATABASE_URL=postgresql://user:password@db/mydb
     depends_on:
       - db
 
   scheduler:
     build: .
-    command: conveyor scheduler
+    command: crazyjob scheduler
     environment:
-      - DATABASE_URL=postgresql://user:password@db/mydb
+      - CRAZYJOB_DATABASE_URL=postgresql://user:password@db/mydb
     depends_on:
       - db
 
@@ -594,27 +592,27 @@ services:
 
 ```python
 app.config.update(
-    CONVEYOR_DASHBOARD_ENABLED=True,
-    CONVEYOR_DASHBOARD_PREFIX="/conveyor",  # default
+    CRAZYJOB_DASHBOARD_ENABLED=True,
+    CRAZYJOB_DASHBOARD_PREFIX="/crazyjob",  # default
 )
 ```
 
-Navigate to `http://localhost:5000/conveyor`.
+Navigate to `http://localhost:5000/crazyjob`.
 
 ### Dashboard Features
 
 | Page | URL | What you see |
 |---|---|---|
-| **Overview** | `/conveyor/` | Job counts per status, throughput graph, error rate |
-| **Enqueued** | `/conveyor/queues` | Jobs waiting to run, grouped by queue |
-| **Active** | `/conveyor/active` | Jobs running right now, with elapsed time |
-| **Scheduled** | `/conveyor/scheduled` | Jobs with a future `run_at` |
-| **Retrying** | `/conveyor/retrying` | Failed jobs waiting for next retry attempt |
-| **Completed** | `/conveyor/completed` | History of successful jobs with latency |
-| **Failed** | `/conveyor/failed` | Recent failures with full stacktrace |
-| **Dead** | `/conveyor/dead` | Jobs that exhausted all attempts |
-| **Workers** | `/conveyor/workers` | Active workers, heartbeat status, current job |
-| **Schedules** | `/conveyor/schedules` | Cron job registry, enable/disable, manual trigger |
+| **Overview** | `/crazyjob/` | Job counts per status, throughput graph, error rate |
+| **Enqueued** | `/crazyjob/queues` | Jobs waiting to run, grouped by queue |
+| **Active** | `/crazyjob/active` | Jobs running right now, with elapsed time |
+| **Scheduled** | `/crazyjob/scheduled` | Jobs with a future `run_at` |
+| **Retrying** | `/crazyjob/retrying` | Failed jobs waiting for next retry attempt |
+| **Completed** | `/crazyjob/completed` | History of successful jobs with latency |
+| **Failed** | `/crazyjob/failed` | Recent failures with full stacktrace |
+| **Dead** | `/crazyjob/dead` | Jobs that exhausted all attempts |
+| **Workers** | `/crazyjob/workers` | Active workers, heartbeat status, current job |
+| **Schedules** | `/crazyjob/schedules` | Cron job registry, enable/disable, manual trigger |
 
 **Actions available from the dashboard:**
 - 🔁 Resurrect a dead job (re-enqueue it)
@@ -630,7 +628,7 @@ Navigate to `http://localhost:5000/conveyor`.
 **Basic auth (simplest):**
 
 ```python
-app.config["CONVEYOR_DASHBOARD_AUTH"] = ("admin", "s3cr3t-p4ssw0rd")
+app.config["CRAZYJOB_DASHBOARD_AUTH"] = ("admin", "s3cr3t-p4ssw0rd")
 ```
 
 **Custom auth function:**
@@ -639,7 +637,7 @@ app.config["CONVEYOR_DASHBOARD_AUTH"] = ("admin", "s3cr3t-p4ssw0rd")
 def my_auth_check(request) -> bool:
     return request.headers.get("X-Internal-Token") == os.environ["INTERNAL_TOKEN"]
 
-app.config["CONVEYOR_DASHBOARD_AUTH"] = my_auth_check
+app.config["CRAZYJOB_DASHBOARD_AUTH"] = my_auth_check
 ```
 
 **Flask-Login integration:**
@@ -650,7 +648,7 @@ from flask_login import current_user
 def require_admin(request) -> bool:
     return current_user.is_authenticated and current_user.is_admin
 
-app.config["CONVEYOR_DASHBOARD_AUTH"] = require_admin
+app.config["CRAZYJOB_DASHBOARD_AUTH"] = require_admin
 ```
 
 ---
@@ -660,24 +658,24 @@ app.config["CONVEYOR_DASHBOARD_AUTH"] = require_admin
 ### Built-in Middleware
 
 ```python
-from conveyor.middleware import (
+from crazyjob.middleware import (
     LoggingMiddleware,
     SentryMiddleware,
     DatadogMiddleware,
     NewRelicMiddleware,
 )
 
-conveyor = FlaskConveyor(app)
-conveyor.use(LoggingMiddleware(level="INFO"))
-conveyor.use(SentryMiddleware())      # reads SENTRY_DSN from env
-conveyor.use(DatadogMiddleware())     # sends metrics to DogStatsD
+cj = FlaskCrazyJob(app)
+cj.use(LoggingMiddleware(level="INFO"))
+cj.use(SentryMiddleware())      # reads SENTRY_DSN from env
+cj.use(DatadogMiddleware())     # sends metrics to DogStatsD
 ```
 
 ### Writing Custom Middleware
 
 ```python
-from conveyor.core.middleware import Middleware
-from conveyor.core.job import JobRecord
+from crazyjob.core.middleware import Middleware
+from crazyjob.core.job import JobRecord
 import time
 
 class TimingMiddleware(Middleware):
@@ -695,7 +693,7 @@ class TimingMiddleware(Middleware):
 
 
 # Register globally
-conveyor.use(TimingMiddleware())
+cj.use(TimingMiddleware())
 ```
 
 ---
@@ -706,19 +704,19 @@ All settings can be provided via `app.config` (Flask), `settings.py` (Django), o
 
 | Config Key | Env Variable | Default | Description |
 |---|---|---|---|
-| `CONVEYOR_DATABASE_URL` | `CONVEYOR_DATABASE_URL` | **required** | PostgreSQL DSN |
-| `CONVEYOR_QUEUES` | `CONVEYOR_QUEUES` | `["default"]` | Default queues for workers |
-| `CONVEYOR_DEFAULT_MAX_ATTEMPTS` | — | `3` | Global default for `max_attempts` |
-| `CONVEYOR_DEFAULT_BACKOFF` | — | `"exponential"` | Global retry strategy |
-| `CONVEYOR_POLL_INTERVAL` | — | `1.0` | Seconds between fetch attempts |
-| `CONVEYOR_JOB_TIMEOUT` | — | `None` | Default job timeout (seconds) |
-| `CONVEYOR_DEAD_LETTER_TTL_DAYS` | — | `30` | Auto-purge dead letters after N days |
-| `CONVEYOR_DASHBOARD_ENABLED` | — | `True` | Enable the web dashboard |
-| `CONVEYOR_DASHBOARD_PREFIX` | — | `"/conveyor"` | URL prefix for the dashboard |
-| `CONVEYOR_DASHBOARD_AUTH` | — | `None` | Tuple, callable, or `None` |
-| `CONVEYOR_USE_SQLALCHEMY` | — | `False` | Reuse app's SQLAlchemy connection |
-| `CONVEYOR_HEARTBEAT_INTERVAL` | — | `10` | Worker heartbeat frequency (seconds) |
-| `CONVEYOR_DEAD_WORKER_THRESHOLD` | — | `60` | Seconds before worker is considered dead |
+| `CRAZYJOB_DATABASE_URL` | `CRAZYJOB_DATABASE_URL` | **required** | PostgreSQL DSN |
+| `CRAZYJOB_QUEUES` | `CRAZYJOB_QUEUES` | `["default"]` | Default queues for workers |
+| `CRAZYJOB_DEFAULT_MAX_ATTEMPTS` | — | `3` | Global default for `max_attempts` |
+| `CRAZYJOB_DEFAULT_BACKOFF` | — | `"exponential"` | Global retry strategy |
+| `CRAZYJOB_POLL_INTERVAL` | — | `1.0` | Seconds between fetch attempts |
+| `CRAZYJOB_JOB_TIMEOUT` | — | `None` | Default job timeout (seconds) |
+| `CRAZYJOB_DEAD_LETTER_TTL_DAYS` | — | `30` | Auto-purge dead letters after N days |
+| `CRAZYJOB_DASHBOARD_ENABLED` | — | `True` | Enable the web dashboard |
+| `CRAZYJOB_DASHBOARD_PREFIX` | — | `"/crazyjob"` | URL prefix for the dashboard |
+| `CRAZYJOB_DASHBOARD_AUTH` | — | `None` | Tuple, callable, or `None` |
+| `CRAZYJOB_USE_SQLALCHEMY` | — | `False` | Reuse app's SQLAlchemy connection |
+| `CRAZYJOB_HEARTBEAT_INTERVAL` | — | `10` | Worker heartbeat frequency (seconds) |
+| `CRAZYJOB_DEAD_WORKER_THRESHOLD` | — | `60` | Seconds before worker is considered dead |
 
 ---
 
@@ -728,7 +726,7 @@ All settings can be provided via `app.config` (Flask), `settings.py` (Django), o
 
 ```python
 # jobs/email_jobs.py
-from conveyor import Job
+from crazyjob import Job
 from myapp.email import send_email
 from myapp.models import User
 
@@ -744,13 +742,12 @@ class WelcomeEmailJob(Job):
 
         send_email(
             to=user.email,
-            subject="Welcome to Acme!",
+            subject="Welcome!",
             template="welcome",
             context={"name": user.first_name}
         )
 
 
-# In a route
 @app.route("/register", methods=["POST"])
 def register():
     user = User.create(**request.json)
@@ -766,8 +763,7 @@ def register():
 
 ```python
 # jobs/file_jobs.py
-from conveyor import Job
-import boto3
+from crazyjob import Job
 
 class ProcessUploadJob(Job):
     queue = "default"
@@ -785,12 +781,11 @@ class ProcessUploadJob(Job):
             upload.result_url = result.url
         except Exception:
             upload.status = "failed"
-            raise  # Let Conveyor handle retry
+            raise  # let CrazyJob handle retry
         finally:
             db.session.commit()
 
 
-# In an upload route
 @app.route("/upload", methods=["POST"])
 def upload_file():
     file = request.files["file"]
@@ -808,14 +803,14 @@ def upload_file():
 
 ```python
 # jobs/webhook_jobs.py
-from conveyor import Job
-from conveyor.exceptions import Retry
+from crazyjob import Job
+from crazyjob.exceptions import Retry
 import httpx
 
 class DeliverWebhookJob(Job):
     queue = "webhooks"
     max_attempts = 10
-    retry_backoff = "exponential_cap"  # backs off up to 1 hour
+    retry_backoff = "exponential_cap"
 
     def perform(self, webhook_id: int):
         webhook = Webhook.query.get(webhook_id)
@@ -851,18 +846,17 @@ class DeliverWebhookJob(Job):
 
 ```python
 # jobs/report_jobs.py
-from conveyor import Job, schedule
+from crazyjob import Job, schedule
 from datetime import timedelta
 
 class GenerateReportJob(Job):
     queue = "reports"
     timeout = timedelta(minutes=30)
-    priority = 80  # low priority — can wait
+    priority = 80
 
     def perform(self, org_id: int, report_type: str, email_to: str):
         org = Organization.query.get(org_id)
         data = fetch_report_data(org, report_type)
-
         pdf_path = render_pdf(data, template=report_type)
         s3_url = upload_to_s3(pdf_path)
 
@@ -874,7 +868,6 @@ class GenerateReportJob(Job):
         )
 
 
-# Triggered on demand
 @app.route("/reports/request", methods=["POST"])
 def request_report():
     GenerateReportJob.enqueue(
@@ -885,7 +878,7 @@ def request_report():
     return jsonify({"message": "Report generation started. You'll receive an email shortly."}), 202
 
 
-# Also scheduled weekly
+# Also runs every Monday at 8 AM
 @schedule(cron="0 8 * * 1", name="weekly_report")
 class WeeklyReportJob(Job):
     queue = "reports"
@@ -903,17 +896,14 @@ class WeeklyReportJob(Job):
 
 ### Chaining Jobs
 
-Conveyor doesn't have a built-in chain primitive — enqueue the next job at the end of `perform()`. This is the simplest and most debuggable approach.
+Enqueue the next job at the end of `perform()`. Simple and fully traceable in the dashboard.
 
 ```python
 class Step1Job(Job):
     queue = "pipeline"
 
     def perform(self, order_id: int):
-        order = Order.query.get(order_id)
-        result = validate_order(order)
-
-        # Enqueue next step on success
+        result = validate_order(order_id)
         Step2Job.enqueue(order_id=order_id, validation=result)
 
 
@@ -944,7 +934,6 @@ class SyncAllUsersJob(Job):
 
     def perform(self):
         user_ids = db.session.query(User.id).all()
-
         for (user_id,) in user_ids:
             SyncUserJob.enqueue(user_id=user_id)
 
@@ -958,28 +947,20 @@ class SyncUserJob(Job):
         sync_to_crm(user)
 ```
 
-Trigger the batch from a route or a schedule:
-
-```python
-SyncAllUsersJob.enqueue()
-# or
-# @schedule(cron="0 2 * * *", name="nightly_sync")
-```
-
 ---
 
 ## Testing
 
-Conveyor provides a test mode that runs jobs synchronously in the same process, so you don't need a worker or a PostgreSQL database in your test suite.
+CrazyJob provides a test mode that runs jobs synchronously in the same process, so you don't need a worker or a PostgreSQL database in your test suite.
 
 ```python
 # conftest.py
 import pytest
-from conveyor.testing import ConveyorTestMode
+from crazyjob.testing import CrazyJobTestMode
 
 @pytest.fixture(autouse=True)
-def conveyor_test_mode():
-    with ConveyorTestMode():
+def crazyjob_test_mode():
+    with CrazyJobTestMode():
         yield
 ```
 
@@ -997,20 +978,20 @@ def test_welcome_email_is_sent(mock_send_email):
 
     mock_send_email.assert_called_once_with(
         to=user.email,
-        subject="Welcome to Acme!",
+        subject="Welcome!",
         template="welcome",
         context={"name": user.first_name}
     )
 ```
 
-**Testing that a job was enqueued (without running it):**
+**Testing that a job was enqueued without running it:**
 
 ```python
-from conveyor.testing import assert_enqueued, assert_not_enqueued
+from crazyjob.testing import assert_enqueued, assert_not_enqueued
 
 def test_registration_enqueues_welcome_email(client):
-    with ConveyorTestMode(execute=False):  # capture but don't run
-        client.post("/register", json={"email": "test@example.com", ...})
+    with CrazyJobTestMode(execute=False):
+        client.post("/register", json={"email": "test@example.com"})
 
         assert_enqueued(WelcomeEmailJob, email="test@example.com")
         assert_not_enqueued(AdminAlertJob)
@@ -1020,37 +1001,38 @@ def test_registration_enqueues_welcome_email(client):
 
 ## Error Handling & Monitoring
 
-### Accessing error details
+### Accessing Error Details
 
-Failed and dead jobs store the full Python traceback in the database. You can inspect them from:
-- The **Failed** and **Dead** pages in the dashboard
-- Querying directly: `SELECT error FROM cvr_jobs WHERE status = 'failed'`
+Failed and dead jobs store the full Python traceback in the database. You can inspect them from the **Failed** and **Dead** pages in the dashboard, or query directly:
+
+```sql
+SELECT class_path, error, attempts FROM cj_jobs WHERE status = 'failed';
+```
 
 ### Integrating with Sentry
 
 ```python
 import sentry_sdk
-from conveyor.middleware import SentryMiddleware
+from crazyjob.middleware import SentryMiddleware
 
 sentry_sdk.init(dsn=os.environ["SENTRY_DSN"])
-conveyor.use(SentryMiddleware())
+cj.use(SentryMiddleware())
 ```
 
-Conveyor will attach job metadata (job ID, class, queue, attempt number) to each Sentry event automatically.
+CrazyJob attaches job metadata (job ID, class, queue, attempt number) to each Sentry event automatically.
 
-### Custom failure handler
+### Custom Failure Handler
 
 ```python
-from conveyor.core.middleware import Middleware
+from crazyjob.core.middleware import Middleware
 
 class AlertMiddleware(Middleware):
     def on_failure(self, job, error):
         if job.attempts >= job.max_attempts:
-            # This failure will send the job to dead letters
             notify_slack(
                 f"💀 Job {job.class_path} has died after {job.attempts} attempts.\n"
                 f"Error: {error}\n"
-                f"Dashboard: https://myapp.com/conveyor/dead"
+                f"Dashboard: https://myapp.com/crazyjob/dead"
             )
 ```
 
@@ -1058,13 +1040,13 @@ class AlertMiddleware(Middleware):
 
 ## FAQ
 
-**Q: Can I use Conveyor without a web framework, in a plain Python script?**
+**Q: Can I use CrazyJob without a web framework, in a plain Python script?**
 
-Yes. You can use the core directly without any framework integration:
+Yes. Use the core directly without any framework integration:
 
 ```python
-from conveyor.backends.postgresql import PostgreSQLDriver
-from conveyor.core.client import Client
+from crazyjob.backends.postgresql import PostgreSQLDriver
+from crazyjob.core.client import Client
 
 backend = PostgreSQLDriver(database_url="postgresql://...")
 client = Client(backend=backend)
@@ -1086,36 +1068,36 @@ Yes. Start as many worker processes as you need. `SELECT ... FOR UPDATE SKIP LOC
 
 ---
 
-**Q: Does Conveyor support async jobs (async def perform)?**
+**Q: Does CrazyJob support async jobs (async def perform)?**
 
 Not in the current version. `perform()` must be synchronous. For async frameworks like FastAPI, the worker runs synchronous jobs in a thread pool. Native `async def perform()` support is planned for a future release.
 
 ---
 
-**Q: How do I clear all completed jobs to save disk space?**
+**Q: How do I clear old completed jobs to save disk space?**
 
 From the dashboard: go to **Completed → Clear All**.
 
 Via CLI:
 
 ```bash
-conveyor purge --status completed --older-than 30d
-conveyor purge --status dead --older-than 7d
+crazyjob purge --status completed --older-than 30d
+crazyjob purge --status dead --older-than 7d
 ```
 
 Via Python:
 
 ```python
-from conveyor.core.client import Client
+from crazyjob.core.client import Client
 client.purge(status="completed", older_than_days=30)
 ```
 
 ---
 
-**Q: Is Conveyor safe to use with database connection pooling (PgBouncer)?**
+**Q: Is CrazyJob safe to use with PgBouncer?**
 
-Yes, with transaction-mode pooling. Conveyor uses short-lived transactions for job fetching. Avoid session-mode pooling as it may interfere with `SKIP LOCKED`.
+Yes, with transaction-mode pooling. CrazyJob uses short-lived transactions for job fetching. Avoid session-mode pooling as it may interfere with `SKIP LOCKED`.
 
 ---
 
-*For architecture details, backend internals, and integration guides for framework authors, see [ARCHITECTURE.md](./ARCHITECTURE.md).*
+*For architecture details, backend internals, and integration guides for framework authors, see [ARCHITECTURE.md](https://github.com/juniortada/crazy_job/blob/main/ARCHITECTURE.md).*
