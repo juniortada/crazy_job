@@ -7,7 +7,7 @@ import logging
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -27,6 +27,8 @@ class SQLiteDriver(BackendDriver):
     Suitable for development, testing, and single-machine deployments.
     """
 
+    dashboard_variant = "sqlite"
+
     def __init__(self, database_path: str = ":memory:") -> None:
         self._database_path = database_path
         self._conn = sqlite3.connect(
@@ -39,11 +41,14 @@ class SQLiteDriver(BackendDriver):
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._lock = threading.Lock()
+        self._closed = False
 
     @contextmanager
     def _cursor(self) -> Generator[sqlite3.Cursor, None, None]:
         """Provide a cursor with auto-commit. Compatible with dashboard layer."""
         with self._lock:
+            if self._closed:
+                raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
             cursor = self._conn.cursor()
             try:
                 yield cursor
@@ -53,8 +58,11 @@ class SQLiteDriver(BackendDriver):
                 raise
 
     def close(self) -> None:
-        """Close the SQLite connection."""
-        self._conn.close()
+        """Close the SQLite connection. Safe to call from any thread."""
+        with self._lock:
+            if not self._closed:
+                self._closed = True
+                self._conn.close()
 
     # ── Enqueue ──────────────────────────────────────────────────────────────
 
@@ -101,6 +109,8 @@ class SQLiteDriver(BackendDriver):
             " LIMIT 1;"
         )
         with self._lock:
+            if self._closed:
+                return None
             cursor = self._conn.cursor()
             try:
                 cursor.execute("BEGIN IMMEDIATE")
@@ -263,7 +273,7 @@ class SQLiteDriver(BackendDriver):
                 id=str(row["id"]),
                 original_job=json.loads(original) if isinstance(original, str) else original,
                 reason=row["reason"],
-                killed_at=self._parse_datetime(row["killed_at"]) or datetime.utcnow(),
+                killed_at=self._parse_datetime(row["killed_at"]) or datetime.now(timezone.utc).replace(tzinfo=None),
                 resurrected_at=self._parse_datetime(row["resurrected_at"]),
             )
 
@@ -359,8 +369,8 @@ class SQLiteDriver(BackendDriver):
             "failed_at": SQLiteDriver._parse_datetime(row.get("failed_at")),
             "error": row.get("error"),
             "worker_id": row.get("worker_id"),
-            "created_at": (SQLiteDriver._parse_datetime(row["created_at"]) or datetime.utcnow()),
-            "updated_at": (SQLiteDriver._parse_datetime(row["updated_at"]) or datetime.utcnow()),
+            "created_at": (SQLiteDriver._parse_datetime(row["created_at"]) or datetime.now(timezone.utc).replace(tzinfo=None)),
+            "updated_at": (SQLiteDriver._parse_datetime(row["updated_at"]) or datetime.now(timezone.utc).replace(tzinfo=None)),
         }
         return JobRecord(**parsed)  # type: ignore[arg-type]
 
@@ -374,9 +384,9 @@ class SQLiteDriver(BackendDriver):
             "concurrency": row["concurrency"],
             "status": row["status"],
             "current_job_id": row.get("current_job_id"),
-            "started_at": (SQLiteDriver._parse_datetime(row["started_at"]) or datetime.utcnow()),
+            "started_at": (SQLiteDriver._parse_datetime(row["started_at"]) or datetime.now(timezone.utc).replace(tzinfo=None)),
             "last_beat_at": (
-                SQLiteDriver._parse_datetime(row["last_beat_at"]) or datetime.utcnow()
+                SQLiteDriver._parse_datetime(row["last_beat_at"]) or datetime.now(timezone.utc).replace(tzinfo=None)
             ),
         }
         return WorkerRecord(**parsed)  # type: ignore[arg-type]

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from crazyjob.config import CrazyJobConfig
+from crazyjob.integrations.flask import config_from_flask
 
 
 @pytest.mark.unit
@@ -34,7 +35,7 @@ class TestCrazyJobConfig:
             "CRAZYJOB_DEFAULT_MAX_ATTEMPTS": 5,
             "CRAZYJOB_POLL_INTERVAL": 0.5,
         }
-        config = CrazyJobConfig.from_flask(app)
+        config = config_from_flask(app)
         assert config.database_url == "postgresql://localhost/mydb"
         assert config.queues == ["critical", "default"]
         assert config.default_max_attempts == 5
@@ -44,7 +45,7 @@ class TestCrazyJobConfig:
         app = MagicMock()
         app.config = {}
         with pytest.raises(KeyError):
-            CrazyJobConfig.from_flask(app)
+            config_from_flask(app)
 
     def test_from_dict(self) -> None:
         config = CrazyJobConfig.from_dict(

@@ -13,10 +13,10 @@ def test_scheduler_fires_due_schedule(backend) -> None:
     with backend._cursor() as cur:
         cur.execute(
             """
-            INSERT INTO cj_schedules (name, cron, class_path, args, kwargs, enabled, next_run_at)
-            VALUES (%s, %s, %s, '[]', '{}', TRUE, NOW() - INTERVAL '1 minute');
+            INSERT INTO cj_schedules (id, name, cron, class_path, args, kwargs, enabled, next_run_at)
+            VALUES (?, ?, ?, ?, '[]', '{}', TRUE, datetime('now', '-1 minute'));
             """,
-            ("test_schedule", "* * * * *", "tests.helpers.jobs.NoOpJob"),
+            ("sched-test-1", "test_schedule", "* * * * *", "tests.helpers.jobs.NoOpJob"),
         )
 
     scheduler = Scheduler(backend=backend, poll_interval=0.1)
@@ -26,7 +26,7 @@ def test_scheduler_fires_due_schedule(backend) -> None:
     # Verify a job was enqueued
     with backend._cursor() as cur:
         cur.execute(
-            "SELECT * FROM cj_jobs WHERE class_path = %s;",
+            "SELECT * FROM cj_jobs WHERE class_path = ?;",
             ("tests.helpers.jobs.NoOpJob",),
         )
         rows = cur.fetchall()
@@ -34,7 +34,7 @@ def test_scheduler_fires_due_schedule(backend) -> None:
 
     # Verify the schedule was updated
     with backend._cursor() as cur:
-        cur.execute("SELECT * FROM cj_schedules WHERE name = %s;", ("test_schedule",))
+        cur.execute("SELECT * FROM cj_schedules WHERE name = ?;", ("test_schedule",))
         schedule = cur.fetchone()
         assert schedule["last_run_at"] is not None
         assert schedule["next_run_at"] is not None

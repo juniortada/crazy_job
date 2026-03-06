@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from crazyjob.core.exceptions import ConfigurationError
@@ -86,7 +86,7 @@ class Client:
 def _resolve_run_at(delay: timedelta | None, run_at: datetime | None) -> datetime | None:
     """Compute run_at from delay or explicit time."""
     if delay is not None:
-        return datetime.utcnow() + delay
+        return datetime.now(timezone.utc).replace(tzinfo=None) + delay
     return run_at
 
 

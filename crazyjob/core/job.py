@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
@@ -30,8 +30,8 @@ class JobRecord:
     failed_at: datetime | None = None
     error: str | None = None
     worker_id: str | None = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     meta: dict[str, object] = field(default_factory=dict)
 
 
@@ -44,8 +44,8 @@ class WorkerRecord:
     concurrency: int
     status: str = "idle"  # idle | busy | stopped
     current_job_id: str | None = None
-    started_at: datetime = field(default_factory=datetime.utcnow)
-    last_beat_at: datetime = field(default_factory=datetime.utcnow)
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    last_beat_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 @dataclass

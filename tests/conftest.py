@@ -19,6 +19,12 @@ def sqlite_backend():
 
 
 @pytest.fixture()
+def backend(sqlite_backend):
+    """Generic backend fixture — uses SQLite in-memory for speed."""
+    return sqlite_backend
+
+
+@pytest.fixture()
 def job_factory():
     """Factory for creating JobRecord instances in tests."""
 

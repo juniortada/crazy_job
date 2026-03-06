@@ -1,4 +1,4 @@
-"""PostgreSQL backend driver using psycopg2 with SELECT ... FOR UPDATE SKIP LOCKED."""
+"""PostgreSQL backend driver using psycopg (v3) with SELECT ... FOR UPDATE SKIP LOCKED."""
 
 from __future__ import annotations
 
@@ -6,12 +6,11 @@ import json
 import logging
 from contextlib import contextmanager
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-import psycopg2
-import psycopg2.extensions
-import psycopg2.extras
-import psycopg2.pool
+import psycopg
+import psycopg.rows
+from psycopg_pool import ConnectionPool
 
 from crazyjob.backends.base import BackendDriver
 from crazyjob.core.job import DeadLetterRecord, JobRecord, WorkerRecord
@@ -21,43 +20,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Register UUID adapter for psycopg2
-psycopg2.extras.register_uuid()  # type: ignore[no-untyped-call]
-
 
 class PostgreSQLDriver(BackendDriver):
     """PostgreSQL implementation of BackendDriver.
 
-    Uses a ThreadedConnectionPool and SKIP LOCKED for safe concurrent job
+    Uses psycopg_pool.ConnectionPool and SKIP LOCKED for safe concurrent job
     consumption across multiple workers.
     """
 
+    dashboard_variant = "postgresql"
+
     def __init__(self, dsn: str, min_conn: int = 1, max_conn: int = 10) -> None:
-        self._pool = psycopg2.pool.ThreadedConnectionPool(min_conn, max_conn, dsn)
+        self._pool: ConnectionPool[Any] = ConnectionPool(
+            conninfo=dsn,
+            min_size=min_conn,
+            max_size=max_conn,
+            open=True,
+        )
 
     @contextmanager
-    def _conn(self) -> Generator[psycopg2.extensions.connection, None, None]:
-        conn = self._pool.getconn()
-        try:
+    def _conn(self) -> Generator[psycopg.Connection[Any], None, None]:
+        """Yield a connection from the pool; commits on success, rolls back on error."""
+        with self._pool.connection() as conn:
             yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            self._pool.putconn(conn)
 
     @contextmanager
-    def _cursor(self) -> Generator[psycopg2.extras.RealDictCursor, None, None]:
-        with (
-            self._conn() as conn,
-            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur,
-        ):
+    def _cursor(self) -> Generator[psycopg.Cursor[dict[str, Any]], None, None]:
+        """Yield a dict-row cursor backed by a pooled connection."""
+        with self._conn() as conn, conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
             yield cur
 
     def close(self) -> None:
         """Close all connections in the pool."""
-        self._pool.closeall()
+        self._pool.close()
 
     # ── Enqueue ──────────────────────────────────────────────────────────────
 
@@ -162,10 +157,7 @@ class PostgreSQLDriver(BackendDriver):
     # ── Move to dead letters ─────────────────────────────────────────────────
 
     def move_to_dead(self, job_id: str, reason: str) -> None:
-        with (
-            self._conn() as conn,
-            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur,
-        ):
+        with self._conn() as conn, conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
             # Snapshot the job as JSONB
             cur.execute("SELECT * FROM cj_jobs WHERE id = %s;", (job_id,))
             job_row = cur.fetchone()
@@ -174,7 +166,7 @@ class PostgreSQLDriver(BackendDriver):
 
             original_job = {
                 k: (v.isoformat() if isinstance(v, datetime) else v)
-                for k, v in dict(job_row).items()
+                for k, v in job_row.items()
             }
 
             cur.execute(
@@ -261,7 +253,7 @@ class PostgreSQLDriver(BackendDriver):
         """Find workers whose heartbeat is older than the threshold."""
         sql = """
             SELECT * FROM cj_workers
-            WHERE last_beat_at < NOW() - INTERVAL '%s seconds'
+            WHERE last_beat_at < NOW() - make_interval(secs => %s)
               AND status != 'stopped';
         """
         with self._cursor() as cur:
@@ -321,7 +313,7 @@ class PostgreSQLDriver(BackendDriver):
     # ── Row mappers ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _row_to_job_record(row: dict[str, object]) -> JobRecord:
+    def _row_to_job_record(row: dict[str, Any]) -> JobRecord:
         args_raw = row["args"]
         kwargs_raw = row["kwargs"]
         parsed = {
@@ -346,7 +338,7 @@ class PostgreSQLDriver(BackendDriver):
         return JobRecord(**parsed)  # type: ignore[arg-type]
 
     @staticmethod
-    def _row_to_worker_record(row: dict[str, object]) -> WorkerRecord:
+    def _row_to_worker_record(row: dict[str, Any]) -> WorkerRecord:
         parsed = {
             "id": row["id"],
             "queues": row["queues"],

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import signal
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from croniter import croniter
@@ -64,7 +64,7 @@ class Scheduler:
 
     def _fire_schedule(self, schedule: dict[str, object]) -> None:
         """Enqueue the job for a due schedule and update timestamps."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         record = JobRecord(
             class_path=str(schedule["class_path"]),

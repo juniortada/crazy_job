@@ -57,10 +57,10 @@ class TestSQLiteFetchNext:
         assert len(non_none) == 1
 
     def test_fetch_skips_scheduled_future_jobs(self, sqlite_backend, job_factory):
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         record = job_factory.create()
-        record.run_at = datetime.utcnow() + timedelta(hours=1)
+        record.run_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1)
         record.status = "enqueued"
         sqlite_backend.enqueue(record)
 

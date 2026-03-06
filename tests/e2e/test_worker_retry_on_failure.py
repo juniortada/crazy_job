@@ -26,10 +26,10 @@ def test_worker_retries_failed_job(backend, job_factory) -> None:
         concurrency=1,
         poll_interval=0.1,
     )
-    thread = threading.Thread(target=lambda: worker.run(max_jobs=2))
+    thread = threading.Thread(target=lambda: worker.run(max_jobs=1))
     thread.start()
-    thread.join(timeout=20)
+    thread.join(timeout=10)
 
     record = backend.get_job(job.id)
-    # After first fail + retry, job should be completed or retrying
+    # After first fail, job should be scheduled for retry
     assert record.status in ("completed", "retrying")

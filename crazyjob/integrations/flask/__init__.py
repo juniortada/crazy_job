@@ -1,4 +1,8 @@
-"""Flask integration for CrazyJob — init_app pattern."""
+"""Flask integration for CrazyJob — init_app pattern.
+
+Also exposes config_from_flask() as the framework-specific config factory.
+SRP: framework-specific factories live here, not in core CrazyJobConfig.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +19,33 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from crazyjob.backends.base import BackendDriver
+
+
+def config_from_flask(app: Any) -> CrazyJobConfig:
+    """Build CrazyJobConfig from a Flask app's config dict.
+
+    Usage::
+
+        from crazyjob.integrations.flask import config_from_flask
+
+        cfg = config_from_flask(app)
+    """
+    c = app.config
+    return CrazyJobConfig(
+        database_url=c["CRAZYJOB_DATABASE_URL"],
+        queues=c.get("CRAZYJOB_QUEUES", ["default"]),
+        default_max_attempts=c.get("CRAZYJOB_DEFAULT_MAX_ATTEMPTS", 3),
+        default_backoff=c.get("CRAZYJOB_DEFAULT_BACKOFF", "exponential"),
+        poll_interval=c.get("CRAZYJOB_POLL_INTERVAL", 1.0),
+        job_timeout=c.get("CRAZYJOB_JOB_TIMEOUT"),
+        dead_letter_ttl_days=c.get("CRAZYJOB_DEAD_LETTER_TTL_DAYS", 30),
+        dashboard_enabled=c.get("CRAZYJOB_DASHBOARD_ENABLED", True),
+        dashboard_prefix=c.get("CRAZYJOB_DASHBOARD_PREFIX", "/crazyjob"),
+        dashboard_auth=c.get("CRAZYJOB_DASHBOARD_AUTH"),
+        use_sqlalchemy=c.get("CRAZYJOB_USE_SQLALCHEMY", False),
+        heartbeat_interval=c.get("CRAZYJOB_HEARTBEAT_INTERVAL", 10),
+        dead_worker_threshold=c.get("CRAZYJOB_DEAD_WORKER_THRESHOLD", 60),
+    )
 
 
 class FlaskCrazyJob(FrameworkIntegration):
@@ -42,7 +73,7 @@ class FlaskCrazyJob(FrameworkIntegration):
             self.mount_dashboard(app, config.dashboard_prefix)
 
     def get_config(self) -> CrazyJobConfig:
-        return CrazyJobConfig.from_flask(self._app)
+        return config_from_flask(self._app)
 
     def get_backend(self) -> BackendDriver:
         config = self.get_config()

@@ -221,13 +221,57 @@ crazyjob/
 
 The single interface between the core engine and any storage system. Defined in `crazyjob/backends/base.py`.
 
+Following the **Interface Segregation Principle (ISP)**, the base module defines focused `Protocol` interfaces before the full `BackendDriver` ABC:
+
 ```python
 from abc import ABC, abstractmethod
+from typing import ClassVar, Protocol, runtime_checkable
 from datetime import datetime
 from crazyjob.core.job import JobRecord, WorkerRecord, DeadLetterRecord
 
 
+# ── Focused Protocol interfaces (ISP) ───────────────────────────────────────
+
+@runtime_checkable
+class JobStore(Protocol):
+    """Minimal interface required by the Worker for job operations."""
+    def enqueue(self, job: JobRecord) -> str: ...
+    def fetch_next(self, queues: list[str], worker_id: str) -> JobRecord | None: ...
+    def mark_completed(self, job_id: str, result: dict[str, object]) -> None: ...
+    def mark_failed(self, job_id: str, error: str, retry_at: datetime | None = None) -> None: ...
+    def move_to_dead(self, job_id: str, reason: str) -> None: ...
+    def get_job(self, job_id: str) -> JobRecord | None: ...
+    def get_dead_letter(self, job_id: str) -> DeadLetterRecord | None: ...
+    def reenqueue_job(self, job_id: str) -> None: ...
+
+@runtime_checkable
+class WorkerRegistry(Protocol):
+    """Minimal interface for worker registration and heartbeat."""
+    def register_worker(self, worker: WorkerRecord) -> None: ...
+    def heartbeat(self, worker_id: str) -> None: ...
+    def deregister_worker(self, worker_id: str) -> None: ...
+    def get_stale_workers(self, threshold_seconds: int) -> list[WorkerRecord]: ...
+    def get_active_jobs_for_worker(self, worker_id: str) -> list[JobRecord]: ...
+    def mark_worker_stopped(self, worker_id: str) -> None: ...
+
+@runtime_checkable
+class ScheduleStore(Protocol):
+    """Minimal interface required by the Scheduler."""
+    def enqueue(self, job: JobRecord) -> str: ...
+    def fetch_due_schedules(self) -> list[dict[str, object]]: ...
+    def update_schedule_timestamps(
+        self, schedule_id: str, last_run_at: datetime, next_run_at: datetime
+    ) -> None: ...
+
+class WorkerBackend(JobStore, WorkerRegistry, Protocol):
+    """Combined protocol for the Worker: job ops + worker registry."""
+
+
+# ── Full ABC for concrete driver implementations ─────────────────────────────
+
 class BackendDriver(ABC):
+
+    dashboard_variant: ClassVar[str]  # e.g. "postgresql", "sqlite"
 
     @abstractmethod
     def enqueue(self, job: JobRecord) -> str:
@@ -235,7 +279,7 @@ class BackendDriver(ABC):
         ...
 
     @abstractmethod
-    def fetch_next(self, queues: list[str]) -> JobRecord | None:
+    def fetch_next(self, queues: list[str], worker_id: str) -> JobRecord | None:
         """
         Atomically fetch, lock, and claim the next job.
         Must increment attempts and set started_at in the SAME transaction.
@@ -245,7 +289,7 @@ class BackendDriver(ABC):
         ...
 
     @abstractmethod
-    def mark_completed(self, job_id: str, result: dict) -> None: ...
+    def mark_completed(self, job_id: str, result: dict[str, object]) -> None: ...
 
     @abstractmethod
     def mark_failed(self, job_id: str, error: str, retry_at: datetime | None = None) -> None: ...
@@ -270,6 +314,8 @@ class BackendDriver(ABC):
 ```
 
 Note: `mark_active` is **not** a separate method. Claiming a job (setting it active, recording `worker_id`, `started_at`, incrementing `attempts`) happens inside `fetch_next` atomically. There is no separate "mark active" step.
+
+The `dashboard_variant` class variable (e.g. `"postgresql"`, `"sqlite"`) allows the dashboard factory to select the correct query subclass without `isinstance` checks — following the **Open/Closed Principle**.
 
 ---
 
@@ -303,7 +349,7 @@ class FrameworkIntegration(ABC):
         Instantiate and return the configured storage driver.
         Should reuse the framework's existing connection pool when possible.
 
-        Flask  → psycopg2 pool or SQLAlchemy engine
+        Flask  → psycopg3 pool or SQLAlchemy engine
         Django → django.db.connection
         FastAPI → asyncpg pool
         """
@@ -590,10 +636,16 @@ enqueue()
 
 Each worker thread runs an independent fetch loop. **`attempts` is already incremented by `fetch_next` before any user code runs** — this is the queue poisoning protection.
 
+Following the **Single Responsibility Principle**, the `Worker` class is split into two:
+
+- **`Worker`** — orchestrates threads, heartbeat, lifecycle, and fetch loop
+- **`JobExecutor`** — loads the job class, runs the middleware pipeline, handles success/retry/failure
+
 ```python
+# Worker._run_loop delegates execution to JobExecutor
 def _run_loop(self) -> None:
     while self._running:
-        job = self.backend.fetch_next(self._queues)
+        job = self.backend.fetch_next(self._queues, self._worker_id)
 
         if job is None:
             time.sleep(self._poll_interval)  # default: 1s, configurable
@@ -608,28 +660,33 @@ def _run_loop(self) -> None:
             )
             continue
 
-        self._execute(job)
+        self._executor.execute(job)  # ← JobExecutor handles the rest
 
-def _execute(self, job: JobRecord) -> None:
-    try:
-        instance = self._load_job_class(job)
-        self._pipeline.run(job, lambda: instance.perform(*job.args, **job.kwargs))
-        self.backend.mark_completed(job.id, result={})
 
-    except Retry as e:
-        retry_at = datetime.utcnow() + timedelta(seconds=e.in_seconds or 0)
-        self.backend.mark_failed(job.id, error=str(e), retry_at=retry_at)
+# JobExecutor.execute — all job execution logic lives here
+class JobExecutor:
+    def __init__(
+        self,
+        backend: WorkerBackend,
+        pipeline: MiddlewarePipeline,
+        context_wrapper: Callable[[Callable[[], object]], object],
+    ) -> None: ...
 
-    except Exception as e:
-        error_text = traceback.format_exc()
-        if job.attempts >= job.max_attempts:
-            # This was the last allowed attempt — send to dead letters
-            self.backend.move_to_dead(job.id, reason=error_text)
-        else:
-            # Still have attempts left — schedule retry with backoff
-            policy = get_backoff_policy(type(instance).retry_backoff)
-            retry_at = datetime.utcnow() + policy.delay_for(job.attempts)
-            self.backend.mark_failed(job.id, error=error_text, retry_at=retry_at)
+    def execute(self, job: JobRecord) -> None:
+        instance: Job | None = None
+        try:
+            instance = self._load_job_class(job)
+            perform_fn = self._build_perform_fn(instance, job)
+            self._pipeline.run(job, perform_fn)
+            self._backend.mark_completed(job.id, result={})
+
+        except Retry as e:
+            retry_at = datetime.utcnow() + timedelta(seconds=e.in_seconds or 0)
+            self._backend.mark_failed(job.id, error=str(e), retry_at=retry_at)
+
+        except Exception:
+            error_text = traceback.format_exc()
+            self._handle_failure(job, instance)
 ```
 
 ### Concurrency Model
@@ -639,11 +696,12 @@ CrazyJob uses a thread-pool model by default (one thread per concurrency slot). 
 ```
 Worker Process
 ├── Main Thread       (fetch loop coordinator)
-├── Thread 1          (fetch loop)
-├── Thread 2          (fetch loop)
+├── Thread 1          (fetch loop → JobExecutor)
+├── Thread 2          (fetch loop → JobExecutor)
 ├── ...
-├── Thread N          (fetch loop, N = --concurrency)
-└── Heartbeat Thread  (writes last_beat_at every 10s)
+├── Thread N          (fetch loop → JobExecutor, N = --concurrency)
+├── Heartbeat Thread  (writes last_beat_at every 10s)
+└── Dead-Detect Thread (checks for stale workers, re-enqueues orphaned jobs)
 ```
 
 For CPU-bound jobs, workers can be started as separate processes using the `--processes` flag (uses `multiprocessing` instead of `threading`).
@@ -831,7 +889,7 @@ cj = FlaskCrazyJob()
 cj.init_app(app)
 ```
 
-- **Config**: reads from `app.config["CRAZYJOB_DATABASE_URL"]`
+- **Config**: reads from `app.config["CRAZYJOB_DATABASE_URL"]` via `config_from_flask(app)` (standalone function in `crazyjob/integrations/flask`)
 - **Backend**: auto-detects from URL scheme (`postgresql://` or `sqlite://`)
 - **Lifecycle**: `@app.teardown_appcontext` closes backend
 - **Dashboard**: mounts Flask `Blueprint` at `/crazyjob/`
@@ -917,6 +975,8 @@ from crazyjob.core.job import JobRecord
 
 class MyBackendDriver(BackendDriver):
 
+    dashboard_variant = "mybackend"  # used by the dashboard factory (OCP)
+
     def __init__(self, connection_url: str):
         self.conn = connect(connection_url)
 
@@ -924,7 +984,7 @@ class MyBackendDriver(BackendDriver):
         # Write job to your storage system
         ...
 
-    def fetch_next(self, queues: list[str]) -> JobRecord | None:
+    def fetch_next(self, queues: list[str], worker_id: str) -> JobRecord | None:
         # Atomically fetch, lock, claim, and increment attempts
         # Must guarantee no two workers receive the same job
         ...
@@ -976,8 +1036,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-postgresql = ["psycopg2-binary>=2.9"]
-flask = ["flask>=3.0", "psycopg2-binary>=2.9"]
+postgresql = ["psycopg[binary]>=3.1", "psycopg-pool>=3.1"]
+flask = ["flask>=3.0", "psycopg[binary]>=3.1", "psycopg-pool>=3.1"]
 fastapi = ["fastapi>=0.100", "uvicorn>=0.25", "jinja2>=3.1"]
 dev = [
     "pytest>=8.0",
@@ -990,7 +1050,8 @@ dev = [
     "mypy>=1.9",
     "bandit>=1.7",
     "pre-commit>=3.7",
-    "psycopg2-binary>=2.9",
+    "psycopg[binary]>=3.1",
+    "psycopg-pool>=3.1",
     "httpx>=0.25",
     "fastapi>=0.100",
     "uvicorn>=0.25",
@@ -1093,7 +1154,7 @@ repos:
     rev: v1.9.0
     hooks:
       - id: mypy
-        additional_dependencies: [types-psycopg2, types-croniter]
+        additional_dependencies: [types-croniter]
 
   - repo: https://github.com/PyCQA/bandit
     rev: 1.7.8

@@ -27,8 +27,8 @@ def test_dead_worker_jobs_are_reenqueued(backend, job_factory) -> None:
         cur.execute(
             """
             UPDATE cj_workers
-            SET last_beat_at = NOW() - INTERVAL '120 seconds'
-            WHERE id = %s;
+            SET last_beat_at = datetime('now', '-120 seconds')
+            WHERE id = ?;
             """,
             ("dead-worker:99999",),
         )

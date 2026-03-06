@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -12,7 +12,7 @@ def test_mark_failed_with_retry_at(backend, job_factory) -> None:
     job = job_factory.enqueue(backend)
     backend.fetch_next(queues=["default"], worker_id="worker-1")
 
-    retry_at = datetime.utcnow() + timedelta(minutes=5)
+    retry_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
     backend.mark_failed(job.id, error="Temporary failure", retry_at=retry_at)
 
     record = backend.get_job(job.id)

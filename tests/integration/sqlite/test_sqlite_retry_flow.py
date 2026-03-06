@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -14,7 +14,7 @@ class TestSQLiteRetryFlow:
         job = sqlite_backend.fetch_next(["default"], "worker-1")
         assert job is not None
 
-        retry_at = datetime.utcnow() + timedelta(seconds=30)
+        retry_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=30)
         sqlite_backend.mark_failed(job.id, "temporary error", retry_at=retry_at)
 
         updated = sqlite_backend.get_job(job.id)

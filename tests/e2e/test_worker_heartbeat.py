@@ -28,7 +28,7 @@ def test_worker_sends_heartbeat(backend) -> None:
     # Check that the worker was registered and has a recent heartbeat
     with backend._cursor() as cur:
         cur.execute(
-            "SELECT * FROM cj_workers WHERE id = %s;",
+            "SELECT * FROM cj_workers WHERE id = ?;",
             (worker.id,),
         )
         cur.fetchone()
