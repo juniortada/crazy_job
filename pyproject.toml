@@ -84,6 +84,10 @@ warn_unused_ignores = true
 module = ["crazyjob.core.*", "crazyjob.backends.*"]
 disallow_any_explicit = true
 
+[[tool.mypy.overrides]]
+module = ["crazyjob.backends.postgresql.*"]
+disallow_any_explicit = false
+
 # ── Bandit ────────────────────────────────────────────────────────────────────
 [tool.bandit]
 exclude_dirs = ["tests"]

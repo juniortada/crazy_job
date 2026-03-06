@@ -165,8 +165,7 @@ class PostgreSQLDriver(BackendDriver):
                 return
 
             original_job = {
-                k: (v.isoformat() if isinstance(v, datetime) else v)
-                for k, v in job_row.items()
+                k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in job_row.items()
             }
 
             cur.execute(
@@ -313,7 +312,7 @@ class PostgreSQLDriver(BackendDriver):
     # ── Row mappers ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _row_to_job_record(row: dict[str, Any]) -> JobRecord:
+    def _row_to_job_record(row: dict[str, object]) -> JobRecord:
         args_raw = row["args"]
         kwargs_raw = row["kwargs"]
         parsed = {
@@ -338,7 +337,7 @@ class PostgreSQLDriver(BackendDriver):
         return JobRecord(**parsed)  # type: ignore[arg-type]
 
     @staticmethod
-    def _row_to_worker_record(row: dict[str, Any]) -> WorkerRecord:
+    def _row_to_worker_record(row: dict[str, object]) -> WorkerRecord:
         parsed = {
             "id": row["id"],
             "queues": row["queues"],

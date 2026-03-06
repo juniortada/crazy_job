@@ -76,8 +76,8 @@ class FastAPICrazyJob(FrameworkIntegration):
     def mount_dashboard(self, app: Any, url_prefix: str) -> None:
         from crazyjob.dashboard.adapters.fastapi import FastAPIDashboardAdapter
 
-        queries = create_dashboard_queries(self._backend)
-        actions = create_dashboard_actions(self._backend)
+        queries = create_dashboard_queries(self.backend)
+        actions = create_dashboard_actions(self.backend)
         adapter = FastAPIDashboardAdapter(queries, actions, url_prefix=url_prefix)
         router = adapter.get_mountable()
         app.include_router(router, prefix=url_prefix)

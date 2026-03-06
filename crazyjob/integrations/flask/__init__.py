@@ -86,8 +86,8 @@ class FlaskCrazyJob(FrameworkIntegration):
             pass
 
     def mount_dashboard(self, app: Any, url_prefix: str) -> None:
-        queries = create_dashboard_queries(self._backend)
-        actions = create_dashboard_actions(self._backend)
+        queries = create_dashboard_queries(self.backend)
+        actions = create_dashboard_actions(self.backend)
         adapter = FlaskDashboardAdapter(queries, actions)
         bp = adapter.get_mountable()
         app.register_blueprint(bp, url_prefix=url_prefix)

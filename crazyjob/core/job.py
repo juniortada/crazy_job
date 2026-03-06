@@ -30,8 +30,12 @@ class JobRecord:
     failed_at: datetime | None = None
     error: str | None = None
     worker_id: str | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    updated_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
     meta: dict[str, object] = field(default_factory=dict)
 
 
@@ -44,8 +48,12 @@ class WorkerRecord:
     concurrency: int
     status: str = "idle"  # idle | busy | stopped
     current_job_id: str | None = None
-    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
-    last_beat_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    started_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    last_beat_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
 
 
 @dataclass

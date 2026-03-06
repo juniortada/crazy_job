@@ -273,7 +273,10 @@ class SQLiteDriver(BackendDriver):
                 id=str(row["id"]),
                 original_job=json.loads(original) if isinstance(original, str) else original,
                 reason=row["reason"],
-                killed_at=self._parse_datetime(row["killed_at"]) or datetime.now(timezone.utc).replace(tzinfo=None),
+                killed_at=(
+                    self._parse_datetime(row["killed_at"])
+                    or datetime.now(timezone.utc).replace(tzinfo=None)
+                ),
                 resurrected_at=self._parse_datetime(row["resurrected_at"]),
             )
 
@@ -369,8 +372,14 @@ class SQLiteDriver(BackendDriver):
             "failed_at": SQLiteDriver._parse_datetime(row.get("failed_at")),
             "error": row.get("error"),
             "worker_id": row.get("worker_id"),
-            "created_at": (SQLiteDriver._parse_datetime(row["created_at"]) or datetime.now(timezone.utc).replace(tzinfo=None)),
-            "updated_at": (SQLiteDriver._parse_datetime(row["updated_at"]) or datetime.now(timezone.utc).replace(tzinfo=None)),
+            "created_at": (
+                SQLiteDriver._parse_datetime(row["created_at"])
+                or datetime.now(timezone.utc).replace(tzinfo=None)
+            ),
+            "updated_at": (
+                SQLiteDriver._parse_datetime(row["updated_at"])
+                or datetime.now(timezone.utc).replace(tzinfo=None)
+            ),
         }
         return JobRecord(**parsed)  # type: ignore[arg-type]
 
@@ -384,9 +393,13 @@ class SQLiteDriver(BackendDriver):
             "concurrency": row["concurrency"],
             "status": row["status"],
             "current_job_id": row.get("current_job_id"),
-            "started_at": (SQLiteDriver._parse_datetime(row["started_at"]) or datetime.now(timezone.utc).replace(tzinfo=None)),
+            "started_at": (
+                SQLiteDriver._parse_datetime(row["started_at"])
+                or datetime.now(timezone.utc).replace(tzinfo=None)
+            ),
             "last_beat_at": (
-                SQLiteDriver._parse_datetime(row["last_beat_at"]) or datetime.now(timezone.utc).replace(tzinfo=None)
+                SQLiteDriver._parse_datetime(row["last_beat_at"])
+                or datetime.now(timezone.utc).replace(tzinfo=None)
             ),
         }
         return WorkerRecord(**parsed)  # type: ignore[arg-type]

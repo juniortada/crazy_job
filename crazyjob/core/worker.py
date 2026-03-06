@@ -61,16 +61,16 @@ class JobExecutor:
             logger.info("Job %s (%s) completed", job.id, job.class_path)
 
         except Retry as e:
-            retry_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=e.in_seconds or 0)
+            retry_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+                seconds=e.in_seconds or 0
+            )
             self._backend.mark_failed(job.id, error=str(e), retry_at=retry_at)
             logger.info("Job %s (%s) retry requested: %s", job.id, job.class_path, e)
 
         except Exception:
             self._handle_failure(job, instance)
 
-    def _build_perform_fn(
-        self, instance: Job, job: JobRecord
-    ) -> Callable[[], object]:
+    def _build_perform_fn(self, instance: Job, job: JobRecord) -> Callable[[], object]:
         def perform_fn() -> object:
             instance.perform(*job.args, **job.kwargs)
             return None
@@ -95,7 +95,9 @@ class JobExecutor:
             policy = get_backoff_policy(
                 type(instance).retry_backoff if instance is not None else "exponential"
             )
-            retry_at = datetime.now(timezone.utc).replace(tzinfo=None) + policy.delay_for(job.attempts)
+            retry_at = datetime.now(timezone.utc).replace(tzinfo=None) + policy.delay_for(
+                job.attempts
+            )
             self._backend.mark_failed(job.id, error=error_text, retry_at=retry_at)
             logger.info(
                 "Job %s (%s) failed (attempt %d/%d), retrying at %s",
